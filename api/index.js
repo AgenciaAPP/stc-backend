@@ -94,7 +94,7 @@ app.post('/api/guardar-general', async (req, res) => {
 });
 
 // ==========================================
-// 5. NUEVA RUTA: CONSULTAR SECOP II
+// 5. NUEVA RUTA: CONSULTAR SECOP II (CORREGIDA POR NIT)
 // ==========================================
 app.get('/api/buscar-secop', async (req, res) => {
   try {
@@ -104,34 +104,34 @@ app.get('/api/buscar-secop', async (req, res) => {
       return res.status(400).json({ status: "error", message: "Falta el parámetro 'contrato' en la consulta" });
     }
 
-    // Endpoint oficial de Datos Abiertos para SECOP II
-    // Filtramos específicamente por el NIT de la Agencia APP para no traer basura de otras entidades
-    const secopUrl = `https://datos.gov.co/resource/p6dx-8zbt.json?numero_del_contrato=${contrato}&nit_de_la_entidad=901035652`;
+    // Filtramos simultáneamente por la referencia del contrato Y por el NIT numérico de la Agencia APP
+    const nitAgenciaAPP = "900623766"; 
+    const secopUrl = `https://www.datos.gov.co/resource/jbjy-vk9h.json?referencia_del_contrato=${encodeURIComponent(contrato)}&nit_entidad=${nitAgenciaAPP}`;
 
     const response = await axios.get(secopUrl);
 
     if (response.data.length === 0) {
       return res.status(404).json({
         status: "not_found",
-        message: "No se encontró ningún contrato con ese número asignado a la Agencia APP en SECOP II."
+        message: "No se encontró ningún contrato con esa referencia asignado a la Agencia APP en SECOP II."
       });
     }
 
-    // Tomamos el primer contrato coincidente que devuelva la API del estado colombia
+    // Tomamos el contrato coincidente que es 100% de la Agencia APP
     const contratoData = response.data[0];
 
-    // Mapeamos y limpiamos las variables para entregárselas masticadas al frontend
+    // Mapeamos las variables con los nombres de columna confirmados
     res.json({
       status: "success",
       datos: {
-        numeroContrato: contratoData.numero_del_contrato,
+        numeroContrato: contratoData.referencia_del_contrato,
         objetoContrato: contratoData.objeto_del_contrato,
-        nombreContratista: contratoData.nombre_del_contratista,
+        nombreContratista: contratoData.proveedor_adjudicado,
         documentoContratista: contratoData.documento_proveedor,
         valorContrato: contratoData.valor_del_contrato,
         fechaInicio: contratoData.fecha_de_inicio_del_contrato,
         fechaFin: contratoData.fecha_de_fin_del_contrato,
-        supervisor: contratoData.nombre_de_la_dependencia // O el campo asignado al supervisor en SECOP
+        supervisor: contratoData.nombre_supervisor !== "No definido" ? contratoData.nombre_supervisor : ""
       }
     });
 
