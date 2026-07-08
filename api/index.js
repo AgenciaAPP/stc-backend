@@ -11,20 +11,18 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// CONFIGURACIÓN SEGURA MEDIANTE VARIABLES DE ENTORNO (PROTECCIÓN AD)
+// CONFIGURACIÓN SEGURO MEDIANTE LAS VARIABLES REALES DE TU PANTALLAZO VERCEL
 const TENANT_ID = process.env.TENANT_ID;
 const CLIENT_ID = process.env.CLIENT_ID;
 const CLIENT_SECRET = process.env.CLIENT_SECRET;
 const SITE_ID = process.env.SITE_ID;
 
-// MAPEO DE ID DE LISTAS DE SHAREPOINT
-const LISTS = {
-  general: process.env.LIST_ID_GENERAL,
-  acciones: process.env.LIST_ID_ACCIONES,
-  asuntos: process.env.LIST_ID_ASUNTOS,
-  sistemas: process.env.LIST_ID_SISTEMAS,
-  directorio: process.env.LIST_ID_DIRECTORIO
-};
+// MAPEO EXACTO CON LOS NOMBRES DE TU CAPTURA DE PANTALLA
+const LIST_ID_GENERAL = process.env.LIST_ID_GENERAL;
+const LIST_ID_ACCIONES = process.env.LIST_ID_ACCIONES;
+const LIST_ID_ASUNTOS = process.env.LIST_ID_ASUNTOS;
+const LIST_ID_SISTEMAS = process.env.LIST_ID_SISTEMAS;
+const LIST_ID_DIRECTORIO = process.env.LIST_ID_DIRECTORIO;
 
 // ==========================================
 // FUNCIÓN: ADQUISICIÓN AUTOMÁTICA DE TOKEN BEARER DESDE AZURE AD
@@ -52,7 +50,7 @@ async function getMicrosoftGraphToken() {
 // 1. RUTA DE PRUEBA: SALUDO INICIAL
 // ==========================================
 app.get('/', (req, res) => {
-  res.send('Servidor STC de la Agencia APP funcionando correctamente en producción.');
+  res.send('Servidor STC de la Agencia APP operando correctamente con variables de entorno validadas.');
 });
 
 // ==========================================
@@ -128,13 +126,13 @@ app.post('/api/save-acta', async (req, res) => {
         EstadoActa: datosGenerales.isFinal ? 'Finalizado' : 'En Diligenciamiento'
       }
     };
-    await axios.post(`${graphBaseUrl}/${LISTS.general}/items`, generalPayload, {
+    await axios.post(`${graphBaseUrl}/${LIST_ID_GENERAL}/items`, generalPayload, {
       headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
     });
 
     // 2. Inyección Multirregistro: Acciones (Pestaña 2)
     for (const item of acciones) {
-      await axios.post(`${graphBaseUrl}/${LISTS.acciones}/items`, {
+      await axios.post(`${graphBaseUrl}/${LIST_ID_ACCIONES}/items`, {
         fields: {
           Title: datosGenerales.cedula,
           ProcesoClave: item.proceso,
@@ -150,7 +148,7 @@ app.post('/api/save-acta', async (req, res) => {
 
     // 3. Inyección Multirregistro: Asuntos (Pestaña 3)
     for (const item of asuntos) {
-      await axios.post(`${graphBaseUrl}/${LISTS.asuntos}/items`, {
+      await axios.post(`${graphBaseUrl}/${LIST_ID_ASUNTOS}/items`, {
         fields: {
           Title: datosGenerales.cedula,
           AsuntoTramite: item.tramite,
@@ -164,7 +162,7 @@ app.post('/api/save-acta', async (req, res) => {
 
     // 4. Inyección Multirregistro: Sistemas (Pestaña 4)
     for (const item of sistemas) {
-      await axios.post(`${graphBaseUrl}/${LISTS.sistemas}/items`, {
+      await axios.post(`${graphBaseUrl}/${LIST_ID_SISTEMAS}/items`, {
         fields: {
           Title: datosGenerales.cedula,
           SistemaAplicativo: item.nombre,
@@ -177,7 +175,7 @@ app.post('/api/save-acta', async (req, res) => {
 
     // 5. Inyección Multirregistro: Directorio (Pestaña 5)
     for (const item of directorio) {
-      await axios.post(`${graphBaseUrl}/${LISTS.directorio}/items`, {
+      await axios.post(`${graphBaseUrl}/${LIST_ID_DIRECTORIO}/items`, {
         fields: {
           Title: datosGenerales.cedula,
           NombreContacto: item.nombre,
