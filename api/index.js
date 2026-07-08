@@ -1,6 +1,9 @@
 import express from 'express';
 import cors from 'cors';
 import axios from 'axios';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 const app = express();
 
@@ -8,20 +11,57 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// CONFIGURACIÓN SEGURA MEDIANTE VARIABLES DE ENTORNO (PROTECCIÓN AD)
+const TENANT_ID = process.env.TENANT_ID;
+const CLIENT_ID = process.env.CLIENT_ID;
+const CLIENT_SECRET = process.env.CLIENT_SECRET;
+const SITE_ID = process.env.SITE_ID;
+
+// MAPEO DE ID DE LISTAS DE SHAREPOINT
+const LISTS = {
+  general: process.env.LIST_ID_GENERAL,
+  acciones: process.env.LIST_ID_ACCIONES,
+  asuntos: process.env.LIST_ID_ASUNTOS,
+  sistemas: process.env.LIST_ID_SISTEMAS,
+  directorio: process.env.LIST_ID_DIRECTORIO
+};
+
+// ==========================================
+// FUNCIÓN: ADQUISICIÓN AUTOMÁTICA DE TOKEN BEARER DESDE AZURE AD
+// ==========================================
+async function getMicrosoftGraphToken() {
+  const url = `https://login.microsoftonline.com/${TENANT_ID}/oauth2/v2.0/token`;
+  const params = new URLSearchParams();
+  params.append('client_id', CLIENT_ID);
+  params.append('scope', 'https://graph.microsoft.com/.default');
+  params.append('client_secret', CLIENT_SECRET);
+  params.append('grant_type', 'client_credentials');
+
+  try {
+    const response = await axios.post(url, params, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+    });
+    return response.data.access_token;
+  } catch (error) {
+    console.error('Error de autenticación con Azure AD:', error.response?.data || error.message);
+    throw new Error('No se pudo adquirir el Token de Acceso de Microsoft.');
+  }
+}
+
 // ==========================================
 // 1. RUTA DE PRUEBA: SALUDO INICIAL
 // ==========================================
 app.get('/', (req, res) => {
-  res.send('Servidor STC de la Agencia APP funcionando correctamente.');
+  res.send('Servidor STC de la Agencia APP funcionando correctamente en producción.');
 });
 
 // ==========================================
-// 2. RUTA DE PRUEBA: CONEXIÓN DE BASE DE DATOS / STATUS
+// 2. RUTA DE PRUEBA: STATUS GENERAL
 // ==========================================
 app.get('/api/status', (req, res) => {
   res.json({ 
     status: "online", 
-    message: "Conexión exitosa con el backend en Vercel",
+    message: "Conexión exitosa con el backend seguro de Vercel",
     timestamp: new Date()
   });
 });
@@ -37,62 +77,124 @@ app.get('/api/buscar-secop', async (req, res) => {
       return res.status(400).json({ status: "error", message: "Falta el parámetro 'contrato' en la consulta" });
     }
 
-    // Filtramos simultáneamente por la referencia del contrato Y por el NIT numérico de la Agencia APP (900623766)
     const nitAgenciaAPP = "900623766"; 
-    const secopUrl = `https://www.datos.gov.co/resource/jbjy-vk9h.json?referencia_del_contrato=${encodeURIComponent(contrato)}&nit_entidad=${nitAgenciaAPP}`;
-
+    const secopUrl = `https://datos.gov.co/resource/jzye-7urr.json?numero_de_contrato=${contrato}&nit_de_la_entidad=${nitAgenciaAPP}`;
+    
     const response = await axios.get(secopUrl);
-
-    if (response.data.length === 0) {
-      return res.status(404).json({
-        status: "not_found",
-        message: "No se encontró ningún contrato con esa referencia asignado a la Agencia APP en SECOP II."
+    
+    if (response.data && response.data.length > 0) {
+      const dataContrato = response.data[0];
+      res.json({
+        success: true,
+        nombre: dataContrato.nombre_o_razon_social_del_contratista || "No registrado",
+        cedula: dataContrato.documento_del_contratista || "No registrado",
+        objeto: dataContrato.objeto_del_contrato || "No registrado"
       });
+    } else {
+      res.json({ success: false, message: "Contrato no encontrado en SECOP II para la Agencia APP." });
     }
-
-    // Tomamos el contrato coincidente que es 100% de la Agencia APP
-    const contratoData = response.data[0];
-
-    // Mapeamos las variables con los nombres de columna confirmados del JSON
-    res.json({
-      status: "success",
-      datos: {
-        numeroContrato: contratoData.referencia_del_contrato,
-        objetoContrato: contratoData.objeto_del_contrato,
-        nombreContratista: contratoData.proveedor_adjudicado,
-        documentoContratista: contratoData.documento_proveedor,
-        valorContrato: contratoData.valor_del_contrato,
-        fechaInicio: contratoData.fecha_de_inicio_del_contrato,
-        fechaFin: contratoData.fecha_de_fin_del_contrato,
-        supervisor: contratoData.nombre_supervisor && contratoData.nombre_supervisor !== "No definido" ? contratoData.nombre_supervisor : ""
-      }
-    });
-
   } catch (error) {
-    console.error("Error consultando la API de SECOP II:", error.message);
-    res.status(500).json({
-      status: "error",
-      message: "Error al conectarse con el servidor de Datos Abiertos de Colombia",
-      detalle: error.message
-    });
+    console.error("Error consultando SECOP II:", error.message);
+    res.status(500).json({ status: "error", message: "Error al conectarse con el servidor gubernamental." });
   }
 });
 
 // ==========================================
-// 4. RUTA: GUARDAR DATOS GENERALES (MOCK DE ENVÍO A SHAREPOINT)
+// 4. RUTA: ENTRADA Y PERSISTENCIA COMPLETA EN SHAREPOINT
 // ==========================================
-app.post('/api/guardar-general', (req, res) => {
-  try {
-    const datosRecibidos = req.body;
-    console.log("Datos para guardar en SharePoint:", datosRecibidos);
+app.post('/api/save-acta', async (req, res) => {
+  const { datosGenerales, acciones, asuntos, sistemas, directorio } = req.body;
 
-    // Aquí irá más adelante el código de integración con Microsoft Graph API / SharePoint
-    res.json({
-      status: "success",
-      message: "Información contractual almacenada correctamente en el repositorio temporal de SharePoint."
+  if (!datosGenerales || !datosGenerales.cedula) {
+    return res.status(400).json({ success: false, message: 'Faltan los datos generales o la cédula de validación.' });
+  }
+
+  try {
+    const token = await getMicrosoftGraphToken();
+    const graphBaseUrl = `https://graph.microsoft.com/v1.0/sites/${SITE_ID}/lists`;
+
+    // 1. Inyección de Datos Generales (Pestaña 1)
+    const generalPayload = {
+      fields: {
+        Title: datosGenerales.cedula,
+        NombreContratista: datosGenerales.nombreContratista,
+        NumeroContrato: datosGenerales.numeroContrato,
+        Supervisor: datosGenerales.supervisor,
+        ObjetoContrato: datosGenerales.objetoContrato,
+        CorreoContacto: datosGenerales.correoContratista,
+        Dependencia: datosGenerales.dependencia,
+        LineamientosGenerales: datosGenerales.lineamientos || '',
+        RecomendacionesEspeciales: datosGenerales.recomendacionesAcciones || '',
+        EstadoActa: datosGenerales.isFinal ? 'Finalizado' : 'En Diligenciamiento'
+      }
+    };
+    await axios.post(`${graphBaseUrl}/${LISTS.general}/items`, generalPayload, {
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
     });
+
+    // 2. Inyección Multirregistro: Acciones (Pestaña 2)
+    for (const item of acciones) {
+      await axios.post(`${graphBaseUrl}/${LISTS.acciones}/items`, {
+        fields: {
+          Title: datosGenerales.cedula,
+          ProcesoClave: item.proceso,
+          Prioridad: item.prioridad,
+          ProductosEntrega: item.productos,
+          EvidenciasEjecucion: item.ejecucion,
+          FechaEjecucion: item.fecha,
+          RutaRepositorio: item.ruta,
+          Observaciones: item.obs
+        }
+      }, { headers: { 'Authorization': `Bearer ${token}` } });
+    }
+
+    // 3. Inyección Multirregistro: Asuntos (Pestaña 3)
+    for (const item of asuntos) {
+      await axios.post(`${graphBaseUrl}/${LISTS.asuntos}/items`, {
+        fields: {
+          Title: datosGenerales.cedula,
+          AsuntoTramite: item.tramite,
+          EstadoActual: item.estado,
+          EntidadDependencia: item.entidad,
+          AccionesPendientes: item.accionesPendientes,
+          FechaLimite: item.fecha
+        }
+      }, { headers: { 'Authorization': `Bearer ${token}` } });
+    }
+
+    // 4. Inyección Multirregistro: Sistemas (Pestaña 4)
+    for (const item of sistemas) {
+      await axios.post(`${graphBaseUrl}/${LISTS.sistemas}/items`, {
+        fields: {
+          Title: datosGenerales.cedula,
+          SistemaAplicativo: item.nombre,
+          Usuario: item.usuario,
+          Contrasena: item.contrasena,
+          Observaciones: item.obs
+        }
+      }, { headers: { 'Authorization': `Bearer ${token}` } });
+    }
+
+    // 5. Inyección Multirregistro: Directorio (Pestaña 5)
+    for (const item of directorio) {
+      await axios.post(`${graphBaseUrl}/${LISTS.directorio}/items`, {
+        fields: {
+          Title: datosGenerales.cedula,
+          NombreContacto: item.nombre,
+          Telefono: item.tel,
+          Email: item.correo,
+          TipoContacto: item.tipo,
+          EntidadDependenciaDirectorio: item.entidad,
+          RecomendacionesDirectorio: item.reco
+        }
+      }, { headers: { 'Authorization': `Bearer ${token}` } });
+    }
+
+    return res.status(200).json({ success: true, message: '¡Acta sincronizada con éxito en SharePoint!' });
+
   } catch (error) {
-    res.status(500).json({ status: "error", message: "Error al guardar en el servidor" });
+    console.error('Error inyectando en SharePoint:', error.response?.data || error.message);
+    return res.status(500).json({ success: false, message: 'Error interno de comunicación con Microsoft Graph.' });
   }
 });
 
