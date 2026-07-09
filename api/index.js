@@ -35,7 +35,7 @@ async function getMicrosoftGraphToken() {
     });
     return response.data.access_token;
   } catch (error) {
-    console.error('Error de autenticación con Azure AD:', error.response?.data || error.message);
+    console.error('Error de autenticación con Azure AD:', error.message);
     throw new Error('No se pudo adquirir el Token de Acceso de Microsoft.');
   }
 }
@@ -66,6 +66,7 @@ app.get('/api/buscar-secop', async (req, res) => {
       
       let fechaLimpia = contratoData.fecha_de_firma || null;
       if (fechaLimpia && fechaLimpia.includes('T')) {
+        fechaLimpia = fechaLinterm;
         fechaLimpia = fechaLimpia.split('T')[0];
       }
 
@@ -104,7 +105,7 @@ app.post('/api/habilitar-contrato', async (req, res) => {
       fields: {
         Title: contrato, 
         Contratista: contratista,
-        NIT_x002f_CC: cedula,
+        NIT_x002f_CC: String(cedula).trim(),
         Objetocontractual: objeto,
         Supervisor: supervisor,
         Fechadeiniciodelcontrato: fechaInicio || '',
@@ -148,25 +149,24 @@ app.get('/api/contratos', async (req, res) => {
 });
 
 // ==========================================
-// FIX REQUERIDO: VALIDAR LOGIN DEL CONTRATISTA CON EVENTUAL CONSISTENCY
+// OPTIMIZACIÓN MAESTRA: LOGIN MEDIANTE BÚSQUEDA ROBUSTA EN MEMORIA COINCIDENTE
 // ==========================================
 app.get('/api/login-contratista', async (req, res) => {
   const { cedula } = req.query;
   try {
     const token = await getMicrosoftGraphToken();
     
-    // Se agregan las directivas obligatorias de Microsoft Graph para filtros avanzados ($count=true y ConsistencyLevel)
-    const url = `https://graph.microsoft.com/v1.0/sites/${SITE_ID}/lists/${LIST_ID_GENERAL}/items?expand=fields&$filter=fields/NIT_x002f_CC eq '${cedula}'&$count=true`;
+    // Traemos la colección base completa para evitar rebotes de filtros avanzados de Graph
+    const url = `https://graph.microsoft.com/v1.0/sites/${SITE_ID}/lists/${LIST_ID_GENERAL}/items?expand=fields`;
+    const response = await axios.get(url, { headers: { 'Authorization': `Bearer ${token}` } });
     
-    const response = await axios.get(url, { 
-      headers: { 
-        'Authorization': `Bearer ${token}`,
-        'ConsistencyLevel': 'eventual'
-      } 
+    // Filtramos quirúrgicamente limpiando espacios vacíos
+    const match = response.data.value.find(item => {
+      const nitFila = item.fields.NIT_x002f_CC ? String(item.fields.NIT_x002f_CC).trim() : '';
+      return nitFila === String(cedula).trim();
     });
     
-    if (response.data.value && response.data.value.length > 0) {
-      const match = response.data.value[0];
+    if (match) {
       res.json({
         success: true,
         exists: true,
@@ -182,12 +182,12 @@ app.get('/api/login-contratista', async (req, res) => {
       res.json({ success: true, exists: false });
     }
   } catch (error) {
-    res.status(500).json({ success: false, detail: error.response?.data?.error || error.message });
+    res.status(500).json({ success: false, detail: error.message });
   }
 });
 
 // ==========================================
-// RUTA: ACTUALIZACIÓN POR PATCH (GUARDAR PROGRESO / FINALIZAR)
+// RUTA: ACTUALIZACIÓN POR PATCH
 // ==========================================
 app.post('/api/save-acta', async (req, res) => {
   const { idSharePoint, datosGenerales, acciones, asuntos, sistemas, directorio } = req.body;
