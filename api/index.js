@@ -72,13 +72,18 @@ app.get('/api/buscar-secop', async (req, res) => {
     const { contrato } = req.query;
 
     if (!contrato) {
-      return res.status(400).json({ status: "error", message: "Falta el parámetro 'contrato' en la consulta" });
+      return res.status(400).json({ success: false, message: "Falta el parámetro 'contrato' en la consulta" });
     }
 
     const nitAgenciaAPP = "900623766"; 
-    const secopUrl = `https://datos.gov.co/resource/jzye-7urr.json?numero_de_contrato=${contrato}&nit_de_la_entidad=${nitAgenciaAPP}`;
+    const secopUrl = `https://datos.gov.co/resource/jzye-7urr.json?numero_de_contrato=${encodeURIComponent(contrato)}&nit_de_la_entidad=${nitAgenciaAPP}`;
     
-    const response = await axios.get(secopUrl);
+    // Agregamos un User-Agent real para evitar que el Web Application Firewall (WAF) del gobierno rebote la petición de Vercel
+    const response = await axios.get(secopUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+      }
+    });
     
     if (response.data && response.data.length > 0) {
       const dataContrato = response.data[0];
@@ -92,8 +97,8 @@ app.get('/api/buscar-secop', async (req, res) => {
       res.json({ success: false, message: "Contrato no encontrado en SECOP II para la Agencia APP." });
     }
   } catch (error) {
-    console.error("Error consultando SECOP II:", error.message);
-    res.status(500).json({ status: "error", message: "Error al conectarse con el servidor gubernamental." });
+    console.error("Error detallado consultando SECOP II:", error.response?.data || error.message);
+    res.status(500).json({ success: false, message: "Error al conectarse con el servidor gubernamental." });
   }
 });
 
