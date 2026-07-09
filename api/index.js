@@ -41,7 +41,7 @@ async function getMicrosoftGraphToken() {
 }
 
 app.get('/', (req, res) => {
-  res.send('Servidor STC de la Agencia APP operando en vivo con consultas dinámicas.');
+  res.send('Servidor STC de la Agencia APP operando en vivo con validaciones de opcionalidad.');
 });
 
 // ==========================================
@@ -123,7 +123,7 @@ app.post('/api/habilitar-contrato', async (req, res) => {
 });
 
 // ==========================================
-// RUTA: OBTENER TODOS LOS CONTRATOS EN VIVO PARA MONITOREO
+// RUTA: OBTENER TODOS LOS CONTRATOS EN VIVO (FIX DE OBJETO CONTRACTUAL)
 // ==========================================
 app.get('/api/contratos', async (req, res) => {
   try {
@@ -137,10 +137,13 @@ app.get('/api/contratos', async (req, res) => {
       name: item.fields.Contratista,
       contract: item.fields.Title,
       boss: item.fields.Supervisor,
+      objeto: item.fields.Objetocontractual, // CORRECCIÓN CLAVE: Mapeo correcto de la columna
       status: item.fields.Estado ? item.fields.Estado.toUpperCase() : 'SIN DILIGENCIAR',
       cedula: item.fields.NIT_x002f_CC,
       lineamientos: item.fields.Lineamientos || '',
-      recomendaciones: item.fields.Recomendaciones || ''
+      recomendaciones: item.fields.Recomendaciones || '',
+      dependencia: item.fields.Dependencia || '',
+      correo: item.fields.CorreoContratista || ''
     }));
 
     res.json({ success: true, data: listaFormateada });
@@ -150,7 +153,7 @@ app.get('/api/contratos', async (req, res) => {
 });
 
 // ==========================================
-// RUTA: LOGIN CONTRATISTA (FIX ADICIÓN CAMPO SUPERVISOR)
+// RUTA: LOGIN CONTRATISTA
 // ==========================================
 app.get('/api/login-contratista', async (req, res) => {
   const { cedula } = req.query;
@@ -172,11 +175,11 @@ app.get('/api/login-contratista', async (req, res) => {
         nombre: match.fields.Contratista,
         contract: match.fields.Title,
         objeto: match.fields.Objetocontractual,
-        supervisor: match.fields.Supervisor || 'No registrado', // SOLUCIÓN PUNTO 2
+        supervisor: match.fields.Supervisor || 'No registrado',
         estado: match.fields.Estado || 'Sin diligenciar',
         correo: match.fields.CorreoContratista || '',
         dependencia: match.fields.Dependencia || '',
-        lineamientos: match.fields.Lineamientos || '', // SOLUCIÓN PUNTO 3 (Backend)
+        lineamientos: match.fields.Lineamientos || '', 
         recomendaciones: match.fields.Recomendaciones || ''
       });
     } else {
@@ -188,7 +191,7 @@ app.get('/api/login-contratista', async (req, res) => {
 });
 
 // ==========================================
-// RUTA: ACTUALIZACIÓN POR PATCH
+// RUTA: PATCH ACTUALIZACIÓN (BLINDADA CONTRA PESTAÑAS OPCIONALES VACÍAS)
 // ==========================================
 app.post('/api/save-acta', async (req, res) => {
   const { idSharePoint, datosGenerales, acciones, asuntos, sistemas, directorio } = req.body;
@@ -217,62 +220,71 @@ app.post('/api/save-acta', async (req, res) => {
     });
 
     if (datosGenerales.isFinal) {
-      // Inyección multirregistros hijos (Acciones, Asuntos, Sistemas, Directorio)
-      for (const item of acciones) {
-        await axios.post(`${graphBaseUrl}/${LIST_ID_ACCIONES}/items`, {
-          fields: {
-            Title: item.proceso,
-            Prioridad: item.prioridad,
-            Productosentrega: item.productos,
-            Acci_x00f3_nparalatransferenciad: item.accionConocimiento, 
-            escribac_x00f3_mosellev_x00f3_a: item.ejecucion,
-            Fechaenqueseejecut_x00f3_laacci_: item.fecha,
-            Ruta_x0028_s_x0029_dondereposa_x: item.ruta,
-            Observaciones: item.obs
-          }
-        }, { headers: { 'Authorization': `Bearer ${token}` } });
+      // CONTROL DE OPCIONALIDAD: Solo inyecta si el arreglo contiene registros reales
+      if (acciones && acciones.length > 0) {
+        for (const item of acciones) {
+          await axios.post(`${graphBaseUrl}/${LIST_ID_ACCIONES}/items`, {
+            fields: {
+              Title: item.proceso,
+              Prioridad: item.prioridad,
+              Productosentrega: item.productos,
+              Acci_x00f3_nparalatransferenciad: item.accionConocimiento, 
+              escribac_x00f3_mosellev_x00f3_a: item.ejecucion,
+              Fechaenqueseejecut_x00f3_laacci_: item.fecha,
+              Ruta_x0028_s_x0029_dondereposa_x: item.ruta,
+              Observaciones: item.obs
+            }
+          }, { headers: { 'Authorization': `Bearer ${token}` } });
+        }
       }
 
-      for (const item of asuntos) {
-        await axios.post(`${graphBaseUrl}/${LIST_ID_ASUNTOS}/items`, {
-          fields: {
-            Title: item.tramite,
-            Estado: item.estado,
-            Entidad_x002f_Dependencia: item.entidad,
-            Accionespendientesporrealizar: item.accionesPendientes,
-            Fechal_x00ed_mite: item.fecha
-          }
-        }, { headers: { 'Authorization': `Bearer ${token}` } });
+      if (asuntos && asuntos.length > 0) {
+        for (const item of asuntos) {
+          await axios.post(`${graphBaseUrl}/${LIST_ID_ASUNTOS}/items`, {
+            fields: {
+              Title: item.tramite,
+              Estado: item.estado,
+              Entidad_x002f_Dependencia: item.entidad,
+              Accionespendientesporrealizar: item.accionesPendientes,
+              Fechal_x00ed_mite: item.fecha
+            }
+          }, { headers: { 'Authorization': `Bearer ${token}` } });
+        }
       }
 
-      for (const item of sistemas) {
-        await axios.post(`${graphBaseUrl}/${LIST_ID_SISTEMAS}/items`, {
-          fields: {
-            Title: item.nombre,
-            Usuario: item.usuario,
-            Contrase_x00f1_a: item.contrasena,
-            Observaciones: item.obs
-          }
-        }, { headers: { 'Authorization': `Bearer ${token}` } });
+      if (sistemas && sistemas.length > 0) {
+        for (const item of sistemas) {
+          await axios.post(`${graphBaseUrl}/${LIST_ID_SISTEMAS}/items`, {
+            fields: {
+              Title: item.nombre,
+              Usuario: item.usuario,
+              Contrase_x00f1_a: item.contrasena,
+              Observaciones: item.obs
+            }
+          }, { headers: { 'Authorization': `Bearer ${token}` } });
+        }
       }
 
-      for (const item of directorio) {
-        await axios.post(`${graphBaseUrl}/${LIST_ID_DIRECTORIO}/items`, {
-          fields: {
-            Title: item.nombre,
-            Tel_x00e9_fono: item.tel,
-            E_x002d_Mail: item.correo,
-            Tipodecontacto: item.tipo,
-            Entidad_x002f_Dependencia: item.entidad,
-            Recomendaciones: item.reco
-          }
-        }, { headers: { 'Authorization': `Bearer ${token}` } });
+      if (directorio && directorio.length > 0) {
+        for (const item of directorio) {
+          await axios.post(`${graphBaseUrl}/${LIST_ID_DIRECTORIO}/items`, {
+            fields: {
+              Title: item.nombre,
+              Tel_x00e9_fono: item.tel,
+              E_x002d_Mail: item.correo,
+              Tipodecontacto: item.tipo,
+              Entidad_x002f_Dependencia: item.entidad,
+              Recomendaciones: item.reco
+            }
+          }, { headers: { 'Authorization': `Bearer ${token}` } });
+        }
       }
     }
 
     return res.status(200).json({ success: true });
 
   } catch (error) {
+    console.error("Error detallado en backend al guardar:", error.response?.data || error.message);
     return res.status(500).json({ success: false, detail: error.response?.data?.error || error.message });
   }
 });
