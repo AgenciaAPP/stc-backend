@@ -41,11 +41,11 @@ async function getMicrosoftGraphToken() {
 }
 
 app.get('/', (req, res) => {
-  res.send('Servidor STC de la Agencia APP operando en vivo con limpieza estricta de formatos.');
+  res.send('Servidor STC operando con filtrado dinámico de supervisores y cédula maestra 123.');
 });
 
 // ==========================================
-// RUTA: CONSULTAR SECOP II
+// RUTA: CONSULTAR SECOP II (EXTRACTOR INTEGRAL)
 // ==========================================
 app.get('/api/buscar-secop', async (req, res) => {
   try {
@@ -61,7 +61,7 @@ app.get('/api/buscar-secop', async (req, res) => {
       const contratoData = response.data[0];
       let fechaLimpia = contratoData.fecha_de_firma || null;
       if (fechaLimpia && fechaLimpia.includes('T')) {
-        fechaLinter = fechaLimpia.split('T')[0];
+        fechaLimpia = fechaLimpia.split('T')[0];
       }
       res.json({
         success: true,
@@ -81,10 +81,10 @@ app.get('/api/buscar-secop', async (req, res) => {
 });
 
 // ==========================================
-// RUTA: CREACIÓN INICIAL POR TALENTO HUMANO (HABILITACIÓN)
+// RUTA: HABILITAR CONTRATO (INYECTA LA CÉDULA DEL SUPERVISOR)
 // ==========================================
 app.post('/api/habilitar-contrato', async (req, res) => {
-  const { contrato, contratista, cedula, objeto, supervisor, fechaInicio } = req.body;
+  const { contrato, contratista, cedula, objeto, supervisor, cedulaSupervisor, fechaInicio } = req.body;
   if (!contrato || !cedula) {
     return res.status(400).json({ success: false, message: 'Faltan datos obligatorios.' });
   }
@@ -96,6 +96,7 @@ app.post('/api/habilitar-contrato', async (req, res) => {
       fields: {
         Title: contrato, 
         Supervisor: supervisor,
+        CedulaSupervisor: String(cedulaSupervisor).trim(), // Nueva columna relacional de control
         Objetocontractual: objeto,
         Fechadeiniciodelcontrato: fechaInicio || '',
         Contratista: contratista,
@@ -113,18 +114,29 @@ app.post('/api/habilitar-contrato', async (req, res) => {
 });
 
 // ==========================================
-// RUTA: OBTENER TODOS LOS CONTRATOS EN VIVO 
+// RUTA: MONITOREO CON FILTRADO DE SEGURIDAD (CONTRATOS)
 // ==========================================
 app.get('/api/contratos', async (req, res) => {
+  const { queryCedula } = req.query; // Captura quién consulta desde el frontend
   try {
     const token = await getMicrosoftGraphToken();
     const url = `https://graph.microsoft.com/v1.0/sites/${SITE_ID}/lists/${LIST_ID_GENERAL}/items?expand=fields`;
     const response = await axios.get(url, { headers: { 'Authorization': `Bearer ${token}` } });
     
-    const listaFormateada = response.data.value.map(item => ({
+    let itemsFiltrados = response.data.value;
+
+    // Regla de Negocio: Si no es Talento Humano (123), filtra exclusivamente sus contratos asignados
+    if (queryCedula && queryCedula.trim() !== '123') {
+      itemsFiltrados = itemsFiltrados.filter(item => 
+        String(item.fields.CedulaSupervisor).trim() === String(queryCedula).trim()
+      );
+    }
+    
+    const listaFormateada = itemsFiltrados.map(item => ({
       idSharePoint: item.id,
       contract: item.fields.Title,
       boss: item.fields.Supervisor,
+      cedulaSupervisor: item.fields.CedulaSupervisor || '',
       objeto: item.fields.Objetocontractual, 
       name: item.fields.Contratista,
       cedula: item.fields.NIT_x002f_CC,
@@ -134,6 +146,7 @@ app.get('/api/contratos', async (req, res) => {
       dependencia: item.fields.Dependencia || '',
       correo: item.fields.CorreoContratista || ''
     }));
+
     res.json({ success: true, data: listaFormateada });
   } catch (error) {
     res.status(500).json({ success: false, message: 'Error trayendo datos de SharePoint.' });
@@ -141,7 +154,7 @@ app.get('/api/contratos', async (req, res) => {
 });
 
 // ==========================================
-// RUTA: OBTENER DETALLES HIJOS FILTRADOS POR CEDULARELACION (CON LIMPIEZA DE FECHAS)
+// RUTA: OBTENER DETALLES HIJOS
 // ==========================================
 app.get('/api/obtener-detalles-hijos', async (req, res) => {
   const { cedula } = req.query;
@@ -156,18 +169,14 @@ app.get('/api/obtener-detalles-hijos', async (req, res) => {
     const acciones = resAcciones.data.value
       .filter(item => String(item.fields.CedulaRelacion).trim() === strCedula)
       .map(item => {
-        // SOLUCIÓN PUNTO 2: Limpieza de la cadena de fecha devuelta por SharePoint para omitir horas Z
         let fechaLimpia = item.fields.Fechaenqueseejecut_x00f3_laacci_ || '';
-        if (fechaLimpia.includes('T')) {
-          fechaLimpia = fechaLimpia.split('T')[0];
-        }
-
+        if (fechaLimpia.includes('T')) { fechaLimpia = fechaLimpia.split('T')[0]; }
         return {
           proceso: item.fields.Title,
           prioridad: item.fields.Prioridad,
           productos: item.fields.Productosentrega,
           accionConocimiento: item.fields.Acci_x00f3_nparalatransferenciad || 'No registrada',
-          ejecucion: item.fields.Describac_x00f3_mosellev_x00f3_a || item.fields.escribac_x00f3_mosellev_x00f3_a || '',
+          ejecucion: item.fields.Describac_x00f3_mosellev_x00f3_a || '',
           fecha: fechaLimpia,
           ruta: item.fields.Ruta_x0028_s_x0029_dondereposa_x || '',
           obs: item.fields.Observaciones || ''
@@ -177,19 +186,13 @@ app.get('/api/obtener-detalles-hijos', async (req, res) => {
     const resAsuntos = await axios.get(`${graphBaseUrl}/${LIST_ID_ASUNTOS}/items?expand=fields`, { headers: { 'Authorization': `Bearer ${token}` } });
     const asuntos = resAsuntos.data.value
       .filter(item => String(item.fields.CedulaRelacion).trim() === strCedula)
-      .map(item => {
-        let fechaLimpiaAsu = item.fields.Fechal_x00ed_mite || '';
-        if (fechaLimpiaAsu.includes('T')) {
-          fechaLinterAsu = fechaLimpiaAsu.split('T')[0];
-        }
-        return {
-          tramite: item.fields.Title,
-          estado: item.fields.Estado,
-          entidad: item.fields.Entidad_x002f_Dependencia,
-          accionesPendientes: item.fields.Accionespendientesporrealizar,
-          fecha: fechaLimpiaAsu
-        };
-      });
+      .map(item => ({
+        tramite: item.fields.Title,
+        estado: item.fields.Estado,
+        entidad: item.fields.Entidad_x002f_Dependencia,
+        accionesPendientes: item.fields.Accionespendientesporrealizar,
+        fecha: item.fields.Fechal_x00ed_mite ? item.fields.Fechal_x00ed_mite.split('T')[0] : ''
+      }));
 
     const resSistemas = await axios.get(`${graphBaseUrl}/${LIST_ID_SISTEMAS}/items?expand=fields`, { headers: { 'Authorization': `Bearer ${token}` } });
     const sistemas = resSistemas.data.value
@@ -294,19 +297,9 @@ app.post('/api/save-acta', async (req, res) => {
     await Promise.all(rAcc.data.value.filter(f => String(f.fields.CedulaRelacion).trim() === strCedula).map(f => 
       axios.delete(`${graphBaseUrl}/${LIST_ID_ACCIONES}/items/${f.id}`, { headers: { 'Authorization': `Bearer ${token}` } })
     ));
-
     if (acciones && acciones.length > 0) {
       for (const item of acciones) {
-        const f = {
-          Title: item.proceso, 
-          CedulaRelacion: strCedula, 
-          Prioridad: item.prioridad, 
-          Productosentrega: item.productos,
-          Acci_x00f3_nparalatransferenciad: item.accionConocimiento, 
-          Describac_x00f3_mosellev_x00f3_a: item.ejecucion, 
-          Ruta_x0028_s_x0029_dondereposa_x: String(item.ruta).trim(), 
-          Observaciones: item.obs
-        };
+        const f = { Title: item.proceso, CedulaRelacion: strCedula, Prioridad: item.prioridad, Productosentrega: item.productos, Acci_x00f3_nparalatransferenciad: item.accionConocimiento, Describac_x00f3_mosellev_x00f3_a: item.ejecucion, Ruta_x0028_s_x0029_dondereposa_x: String(item.ruta).trim(), Observaciones: item.obs };
         if (item.fecha && item.fecha.trim() !== "") f.Fechaenqueseejecut_x00f3_laacci_ = item.fecha;
         await axios.post(`${graphBaseUrl}/${LIST_ID_ACCIONES}/items`, { fields: f }, { headers: { 'Authorization': `Bearer ${token}` } });
       }
