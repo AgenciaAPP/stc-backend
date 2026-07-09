@@ -49,7 +49,7 @@ app.get('/api/status', (req, res) => {
 });
 
 // ==========================================
-// 3. RUTA: CONSULTAR SECOP II 
+// RUTA: CONSULTAR SECOP II 
 // ==========================================
 app.get('/api/buscar-secop', async (req, res) => {
   try {
@@ -76,7 +76,7 @@ app.get('/api/buscar-secop', async (req, res) => {
         objeto: contratoData.objeto_del_contrato || "No registrado",
         nombreSupervisor: contratoData.nombre_supervisor || "No registrado",
         cedulaSupervisor: contratoData.n_mero_de_documento_supervisor || "No registrado",
-        fechaFirma: contratoData.fecha_de_firma || null // Captura para la columna de fecha inicio
+        fechaFirma: contratoData.fecha_de_firma || null
       });
     } else {
       res.json({ success: false, message: "No se encontró ningún contrato con esa referencia asignado a la Agencia APP en SECOP II." });
@@ -88,7 +88,45 @@ app.get('/api/buscar-secop', async (req, res) => {
 });
 
 // ==========================================
-// 4. RUTA: PERSISTENCIA COMPLETA EN SHAREPOINT (FINALIZAR Y ENVIAR)
+// PASO A: CREACIÓN INICIAL POR TALENTO HUMANO (HABILITACIÓN)
+// ==========================================
+app.post('/api/habilitar-contrato', async (req, res) => {
+  const { contrato, contratista, cedula, objeto, supervisor, fechaInicio } = req.body;
+
+  if (!contrato || !cedula) {
+    return res.status(400).json({ success: false, message: 'Faltan datos obligatorios para habilitar el contrato.' });
+  }
+
+  try {
+    const token = await getMicrosoftGraphToken();
+    const graphBaseUrl = `https://graph.microsoft.com/v1.0/sites/${SITE_ID}/lists`;
+
+    const habilitarPayload = {
+      fields: {
+        Title: contrato, 
+        Contratista: contratista,
+        NIT_x002f_CC: cedula,
+        Objetocontractual: objeto,
+        Supervisor: supervisor,
+        Fechadeiniciodelcontrato: fechaInicio || '',
+        Estado: 'Sin diligenciar'
+      }
+    };
+
+    await axios.post(`${graphBaseUrl}/${LIST_ID_GENERAL}/items`, habilitarPayload, {
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
+    });
+
+    return res.status(200).json({ success: true, message: 'Contrato habilitado e inyectado con éxito en SharePoint.' });
+  } catch (error) {
+    const apiErrorDetail = error.response?.data?.error || error.message;
+    console.error('Error al habilitar en SharePoint:', JSON.stringify(apiErrorDetail));
+    return res.status(500).json({ success: false, message: 'Error al registrar habilitación en Graph.', detail: apiErrorDetail });
+  }
+});
+
+// ==========================================
+// RUTA: PERSISTENCIA COMPLETA EN SHAREPOINT (FINALIZAR Y ENVIAR)
 // ==========================================
 app.post('/api/save-acta', async (req, res) => {
   const { datosGenerales, acciones, asuntos, sistemas, directorio } = req.body;
@@ -101,10 +139,9 @@ app.post('/api/save-acta', async (req, res) => {
     const token = await getMicrosoftGraphToken();
     const graphBaseUrl = `https://graph.microsoft.com/v1.0/sites/${SITE_ID}/lists`;
 
-    // 1. Homologación: STC_General
     const generalPayload = {
       fields: {
-        Title: datosGenerales.numeroContrato, // Guarda número de contrato
+        Title: datosGenerales.numeroContrato, 
         Supervisor: datosGenerales.supervisor,
         Objetocontractual: datosGenerales.objetoContrato,
         Fechadeiniciodelcontrato: datosGenerales.fechaInicio || '', 
@@ -122,16 +159,14 @@ app.post('/api/save-acta', async (req, res) => {
       headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
     });
 
-    // Solo si es el envío final guardamos los multirregistros hijos usando como llaves el número de contrato o cédula
     if (datosGenerales.isFinal) {
-      // 2. Homologación: STC_Acciones
       for (const item of acciones) {
         await axios.post(`${graphBaseUrl}/${LIST_ID_ACCIONES}/items`, {
           fields: {
             Title: item.proceso,
             Prioridad: item.prioridad,
             Productosentrega: item.productos,
-            Acci_x00f3_nparalatransferenciad: item.accionConocimiento, // Nuevo campo inyectado
+            Acci_x00f3_nparalatransferenciad: item.accionConocimiento, 
             escribac_x00f3_mosellev_x00f3_a: item.ejecucion,
             Fechaenqueseejecut_x00f3_laacci_: item.fecha,
             Ruta_x0028_s_x0029_dondereposa_x: item.ruta,
@@ -140,7 +175,6 @@ app.post('/api/save-acta', async (req, res) => {
         }, { headers: { 'Authorization': `Bearer ${token}` } });
       }
 
-      // 3. Homologación: STC_Asuntos
       for (const item of asuntos) {
         await axios.post(`${graphBaseUrl}/${LIST_ID_ASUNTOS}/items`, {
           fields: {
@@ -153,7 +187,6 @@ app.post('/api/save-acta', async (req, res) => {
         }, { headers: { 'Authorization': `Bearer ${token}` } });
       }
 
-      // 4. Homologación: STC_Sistemas
       for (const item of sistemas) {
         await axios.post(`${graphBaseUrl}/${LIST_ID_SISTEMAS}/items`, {
           fields: {
@@ -165,7 +198,6 @@ app.post('/api/save-acta', async (req, res) => {
         }, { headers: { 'Authorization': `Bearer ${token}` } });
       }
 
-      // 5. Homologación: STC_Directorio
       for (const item of directorio) {
         await axios.post(`${graphBaseUrl}/${LIST_ID_DIRECTORIO}/items`, {
           fields: {
