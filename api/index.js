@@ -41,7 +41,7 @@ async function getMicrosoftGraphToken() {
 }
 
 app.get('/', (req, res) => {
-  res.send('Servidor STC operando con persistencia total en cascada.');
+  res.send('Servidor STC operando con persistencia transaccional y limpieza de IDs homologada.');
 });
 
 // ==========================================
@@ -140,7 +140,7 @@ app.get('/api/contratos', async (req, res) => {
 });
 
 // ==========================================
-// RUTA: ENCONTRAR TABLAS HIJAS DE UN CONTRATISTA (SOLUCIÓN PUNTO 1 Y 4)
+// RUTA: ENCONTRAR TABLAS HIJAS POR CÉDULA (CON ID MAPADO CORRECTAMENTE)
 // ==========================================
 app.get('/api/obtener-detalles-hijos', async (req, res) => {
   const { cedula } = req.query;
@@ -148,12 +148,12 @@ app.get('/api/obtener-detalles-hijos', async (req, res) => {
     const token = await getMicrosoftGraphToken();
     const graphBaseUrl = `https://graph.microsoft.com/v1.0/sites/${SITE_ID}/lists`;
 
-    // Traemos colecciones secundarias y filtramos por la cédula guardada en el campo Title de los hijos
     const resAcciones = await axios.get(`${graphBaseUrl}/${LIST_ID_ACCIONES}/items?expand=fields`, { headers: { 'Authorization': `Bearer ${token}` } });
     const filtradoAcciones = resAcciones.data.value
       .filter(item => String(item.fields.Title).trim() === String(cedula).trim())
       .map(item => ({
-        proceso: item.fields.Title,
+        idSharePointHijo: item.id, // Guardamos explícitamente su ID de fila técnica
+        proceso: item.fields.ProcesoClave || 'No registrado',
         prioridad: item.fields.Prioridad,
         productos: item.fields.Productosentrega,
         accionConocimiento: item.fields.Acci_x00f3_nparalatransferenciad || 'No registrada',
@@ -211,7 +211,7 @@ app.get('/api/login-contratista', async (req, res) => {
 });
 
 // ==========================================
-// PERSISTENCIA COMPLETA (TANTO GUARDADO PRELIMINAR COMO FINAL)
+// RUTA: SAVE-ACTA BLINDADA (CON FIX DE ID DE FILA DE BORRADO DE ACCIONES)
 // ==========================================
 app.post('/api/save-acta', async (req, res) => {
   const { idSharePoint, datosGenerales, acciones, asuntos, sistemas, directorio } = req.body;
@@ -234,22 +234,26 @@ app.post('/api/save-acta', async (req, res) => {
       }
     };
 
+    // 1. PATCH sobre la lista General
     await axios.patch(`${graphBaseUrl}/${LIST_ID_GENERAL}/items/${idSharePoint}`, generalPayload, {
       headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
     });
 
-    // SOLUCIÓN TOTAL MULTIRREGISTROS (Persisten tanto en preliminar como en final)
-    // Limpieza previa de las filas anteriores del contratista para evitar duplicación
+    // 2. Limpieza síncrona en cascada usando los IDs reales de fila de Graph (Solución al error del PATCH)
     const resAccionesActuales = await axios.get(`${graphBaseUrl}/${LIST_ID_ACCIONES}/items?expand=fields`, { headers: { 'Authorization': `Bearer ${token}` } });
     const filasABorrar = resAccionesActuales.data.value.filter(f => String(f.fields.Title).trim() === String(datosGenerales.cedula).trim());
-    for (const f of filasABorrar) {
-      await axios.delete(`${graphBaseUrl}/${LIST_ID_ACCIONES}/items/${f.id}`, { headers: { 'Authorization': `Bearer ${token}` } });
-    }
+    
+    // Ejecutamos los borrados en bloque síncrono para asegurar la transacción limpia
+    await Promise.all(filasABorrar.map(f => 
+      axios.delete(`${graphBaseUrl}/${LIST_ID_ACCIONES}/items/${f.id}`, { headers: { 'Authorization': `Bearer ${token}` } })
+    ));
 
+    // 3. Inyección limpia de las acciones cargadas localmente
     if (acciones && acciones.length > 0) {
       for (const item of acciones) {
         const accFields = {
-          Title: datosGenerales.cedula, // Usamos la cédula como vinculador relacional
+          Title: String(datosGenerales.cedula).trim(), // Cédula vinculadora
+          ProcesoClave: item.proceso, // Homologación con la columna real de tu SharePoint
           Prioridad: item.prioridad,
           Productosentrega: item.productos,
           Acci_x00f3_nparalatransferenciad: item.accionConocimiento, 
@@ -266,6 +270,7 @@ app.post('/api/save-acta', async (req, res) => {
 
     return res.status(200).json({ success: true });
   } catch (error) {
+    console.error("Error crítico en save-acta:", error.response?.data || error.message);
     return res.status(500).json({ success: false, detail: error.response?.data?.error || error.message });
   }
 });
