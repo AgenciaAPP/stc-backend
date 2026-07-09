@@ -41,7 +41,7 @@ async function getMicrosoftGraphToken() {
 }
 
 app.get('/', (req, res) => {
-  res.send('Servidor STC operando con persistencia transaccional y limpieza de IDs homologada.');
+  res.send('Servidor STC operando con canal de diagnóstico detallado.');
 });
 
 // ==========================================
@@ -140,7 +140,7 @@ app.get('/api/contratos', async (req, res) => {
 });
 
 // ==========================================
-// RUTA: ENCONTRAR TABLAS HIJAS POR CÉDULA (CON ID MAPADO CORRECTAMENTE)
+// RUTA: ENCONTRAR TABLAS HIJAS POR CÉDULA
 // ==========================================
 app.get('/api/obtener-detalles-hijos', async (req, res) => {
   const { cedula } = req.query;
@@ -152,8 +152,8 @@ app.get('/api/obtener-detalles-hijos', async (req, res) => {
     const filtradoAcciones = resAcciones.data.value
       .filter(item => String(item.fields.Title).trim() === String(cedula).trim())
       .map(item => ({
-        idSharePointHijo: item.id, // Guardamos explícitamente su ID de fila técnica
-        proceso: item.fields.ProcesoClave || 'No registrado',
+        idSharePointHijo: item.id,
+        proceso: item.fields.Title || 'No registrado',
         prioridad: item.fields.Prioridad,
         productos: item.fields.Productosentrega,
         accionConocimiento: item.fields.Acci_x00f3_nparalatransferenciad || 'No registrada',
@@ -211,7 +211,7 @@ app.get('/api/login-contratista', async (req, res) => {
 });
 
 // ==========================================
-// RUTA: SAVE-ACTA BLINDADA (CON FIX DE ID DE FILA DE BORRADO DE ACCIONES)
+// RUTA: SAVE-ACTA CON INYECTOR DE DIAGNÓSTICO PROFUNDO EN EL CATCH
 // ==========================================
 app.post('/api/save-acta', async (req, res) => {
   const { idSharePoint, datosGenerales, acciones, asuntos, sistemas, directorio } = req.body;
@@ -234,26 +234,21 @@ app.post('/api/save-acta', async (req, res) => {
       }
     };
 
-    // 1. PATCH sobre la lista General
     await axios.patch(`${graphBaseUrl}/${LIST_ID_GENERAL}/items/${idSharePoint}`, generalPayload, {
       headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
     });
 
-    // 2. Limpieza síncrona en cascada usando los IDs reales de fila de Graph (Solución al error del PATCH)
     const resAccionesActuales = await axios.get(`${graphBaseUrl}/${LIST_ID_ACCIONES}/items?expand=fields`, { headers: { 'Authorization': `Bearer ${token}` } });
     const filasABorrar = resAccionesActuales.data.value.filter(f => String(f.fields.Title).trim() === String(datosGenerales.cedula).trim());
     
-    // Ejecutamos los borrados en bloque síncrono para asegurar la transacción limpia
     await Promise.all(filasABorrar.map(f => 
       axios.delete(`${graphBaseUrl}/${LIST_ID_ACCIONES}/items/${f.id}`, { headers: { 'Authorization': `Bearer ${token}` } })
     ));
 
-    // 3. Inyección limpia de las acciones cargadas localmente
     if (acciones && acciones.length > 0) {
       for (const item of acciones) {
         const accFields = {
-          Title: String(datosGenerales.cedula).trim(), // Cédula vinculadora
-          ProcesoClave: item.proceso, // Homologación con la columna real de tu SharePoint
+          Title: String(datosGenerales.cedula).trim(), 
           Prioridad: item.prioridad,
           Productosentrega: item.productos,
           Acci_x00f3_nparalatransferenciad: item.accionConocimiento, 
@@ -270,8 +265,14 @@ app.post('/api/save-acta', async (req, res) => {
 
     return res.status(200).json({ success: true });
   } catch (error) {
-    console.error("Error crítico en save-acta:", error.response?.data || error.message);
-    return res.status(500).json({ success: false, detail: error.response?.data?.error || error.message });
+    // DIAGNÓSTICO EN VIVO: Extraemos la respuesta real del servidor de Microsoft
+    const apiErrorDetail = error.response?.data?.error || error.message;
+    console.error("Error pormenorizado en save-acta:", JSON.stringify(apiErrorDetail));
+    return res.status(500).json({ 
+      success: false, 
+      message: 'Rechazo de persistencia en sublistas.',
+      detail: apiErrorDetail 
+    });
   }
 });
 
