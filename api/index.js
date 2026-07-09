@@ -66,7 +66,6 @@ app.get('/api/buscar-secop', async (req, res) => {
       
       let fechaLimpia = contratoData.fecha_de_firma || null;
       if (fechaLimpia && fechaLimpia.includes('T')) {
-        fechaLimpia = fechaLinterm;
         fechaLimpia = fechaLimpia.split('T')[0];
       }
 
@@ -139,7 +138,9 @@ app.get('/api/contratos', async (req, res) => {
       contract: item.fields.Title,
       boss: item.fields.Supervisor,
       status: item.fields.Estado ? item.fields.Estado.toUpperCase() : 'SIN DILIGENCIAR',
-      cedula: item.fields.NIT_x002f_CC
+      cedula: item.fields.NIT_x002f_CC,
+      lineamientos: item.fields.Lineamientos || '',
+      recomendaciones: item.fields.Recomendaciones || ''
     }));
 
     res.json({ success: true, data: listaFormateada });
@@ -149,18 +150,15 @@ app.get('/api/contratos', async (req, res) => {
 });
 
 // ==========================================
-// OPTIMIZACIÓN MAESTRA: LOGIN MEDIANTE BÚSQUEDA ROBUSTA EN MEMORIA COINCIDENTE
+// RUTA: LOGIN CONTRATISTA (FIX ADICIÓN CAMPO SUPERVISOR)
 // ==========================================
 app.get('/api/login-contratista', async (req, res) => {
   const { cedula } = req.query;
   try {
     const token = await getMicrosoftGraphToken();
-    
-    // Traemos la colección base completa para evitar rebotes de filtros avanzados de Graph
     const url = `https://graph.microsoft.com/v1.0/sites/${SITE_ID}/lists/${LIST_ID_GENERAL}/items?expand=fields`;
     const response = await axios.get(url, { headers: { 'Authorization': `Bearer ${token}` } });
     
-    // Filtramos quirúrgicamente limpiando espacios vacíos
     const match = response.data.value.find(item => {
       const nitFila = item.fields.NIT_x002f_CC ? String(item.fields.NIT_x002f_CC).trim() : '';
       return nitFila === String(cedula).trim();
@@ -174,9 +172,12 @@ app.get('/api/login-contratista', async (req, res) => {
         nombre: match.fields.Contratista,
         contract: match.fields.Title,
         objeto: match.fields.Objetocontractual,
+        supervisor: match.fields.Supervisor || 'No registrado', // SOLUCIÓN PUNTO 2
         estado: match.fields.Estado || 'Sin diligenciar',
         correo: match.fields.CorreoContratista || '',
-        dependencia: match.fields.Dependencia || ''
+        dependencia: match.fields.Dependencia || '',
+        lineamientos: match.fields.Lineamientos || '', // SOLUCIÓN PUNTO 3 (Backend)
+        recomendaciones: match.fields.Recomendaciones || ''
       });
     } else {
       res.json({ success: true, exists: false });
@@ -216,6 +217,7 @@ app.post('/api/save-acta', async (req, res) => {
     });
 
     if (datosGenerales.isFinal) {
+      // Inyección multirregistros hijos (Acciones, Asuntos, Sistemas, Directorio)
       for (const item of acciones) {
         await axios.post(`${graphBaseUrl}/${LIST_ID_ACCIONES}/items`, {
           fields: {
