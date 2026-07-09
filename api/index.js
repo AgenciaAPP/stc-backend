@@ -41,7 +41,7 @@ async function getMicrosoftGraphToken() {
 }
 
 app.get('/', (req, res) => {
-  res.send('Servidor STC operando con canal de diagnóstico detallado.');
+  res.send('Servidor STC operando con canal de diagnóstico detallado y mapeo de acciones corregido.');
 });
 
 // ==========================================
@@ -153,11 +153,11 @@ app.get('/api/obtener-detalles-hijos', async (req, res) => {
       .filter(item => String(item.fields.Title).trim() === String(cedula).trim())
       .map(item => ({
         idSharePointHijo: item.id,
-        proceso: item.fields.Title || 'No registrado',
+        proceso: item.fields.ProcesoClave || 'No registrado',
         prioridad: item.fields.Prioridad,
         productos: item.fields.Productosentrega,
         accionConocimiento: item.fields.Acci_x00f3_nparalatransferenciad || 'No registrada',
-        ejecucion: item.fields.escribac_x00f3_mosellev_x00f3_a,
+        ejecucion: item.fields.escribac_x00f3_mosellev_x00f3_a || item.fields.Describac_x00f3_mosellev_x00f3_a || '',
         fecha: item.fields.Fechaenqueseejecut_x00f3_laacci_ || '',
         ruta: item.fields.Ruta_x0028_s_x0029_dondereposa_x,
         obs: item.fields.Observaciones || ''
@@ -211,7 +211,7 @@ app.get('/api/login-contratista', async (req, res) => {
 });
 
 // ==========================================
-// RUTA: SAVE-ACTA CON INYECTOR DE DIAGNÓSTICO PROFUNDO EN EL CATCH
+// RUTA: SAVE-ACTA CORREGIDA (HOMOLOGACIÓN DE CAMPOS EXTENSOS)
 // ==========================================
 app.post('/api/save-acta', async (req, res) => {
   const { idSharePoint, datosGenerales, acciones, asuntos, sistemas, directorio } = req.body;
@@ -249,10 +249,13 @@ app.post('/api/save-acta', async (req, res) => {
       for (const item of acciones) {
         const accFields = {
           Title: String(datosGenerales.cedula).trim(), 
+          ProcesoClave: item.proceso,
           Prioridad: item.prioridad,
           Productosentrega: item.productos,
           Acci_x00f3_nparalatransferenciad: item.accionConocimiento, 
+          // FIX ADAPTATIVO: Evaluamos ambas posibilidades de prefijos generados por SharePoint
           escribac_x00f3_mosellev_x00f3_a: item.ejecucion,
+          Describac_x00f3_mosellev_x00f3_a: item.ejecucion,
           Ruta_x0028_s_x0029_dondereposa_x: item.ruta,
           Observaciones: item.obs
         };
@@ -265,7 +268,6 @@ app.post('/api/save-acta', async (req, res) => {
 
     return res.status(200).json({ success: true });
   } catch (error) {
-    // DIAGNÓSTICO EN VIVO: Extraemos la respuesta real del servidor de Microsoft
     const apiErrorDetail = error.response?.data?.error || error.message;
     console.error("Error pormenorizado en save-acta:", JSON.stringify(apiErrorDetail));
     return res.status(500).json({ 
