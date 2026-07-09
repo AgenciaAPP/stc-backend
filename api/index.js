@@ -41,7 +41,7 @@ async function getMicrosoftGraphToken() {
 }
 
 app.get('/', (req, res) => {
-  res.send('Servidor STC de la Agencia APP operando en vivo con validaciones de opcionalidad.');
+  res.send('Servidor STC de la Agencia APP operando en vivo con persistencia homologada.');
 });
 
 // ==========================================
@@ -123,7 +123,7 @@ app.post('/api/habilitar-contrato', async (req, res) => {
 });
 
 // ==========================================
-// RUTA: OBTENER TODOS LOS CONTRATOS EN VIVO (FIX DE OBJETO CONTRACTUAL)
+// RUTA: OBTENER TODOS LOS CONTRATOS EN VIVO 
 // ==========================================
 app.get('/api/contratos', async (req, res) => {
   try {
@@ -137,13 +137,13 @@ app.get('/api/contratos', async (req, res) => {
       name: item.fields.Contratista,
       contract: item.fields.Title,
       boss: item.fields.Supervisor,
-      objeto: item.fields.Objetocontractual, // CORRECCIÓN CLAVE: Mapeo correcto de la columna
+      objeto: item.fields.Objetocontractual, 
       status: item.fields.Estado ? item.fields.Estado.toUpperCase() : 'SIN DILIGENCIAR',
       cedula: item.fields.NIT_x002f_CC,
       lineamientos: item.fields.Lineamientos || '',
       recomendaciones: item.fields.Recomendaciones || '',
       dependencia: item.fields.Dependencia || '',
-      correo: item.fields.CorreoContratista || ''
+      correo: item.fields.CorreoContratista || '' // Propiedad homologada para consulta general
     }));
 
     res.json({ success: true, data: listaFormateada });
@@ -191,7 +191,7 @@ app.get('/api/login-contratista', async (req, res) => {
 });
 
 // ==========================================
-// RUTA: PATCH ACTUALIZACIÓN (BLINDADA CONTRA PESTAÑAS OPCIONALES VACÍAS)
+// RUTA: PATCH ACTUALIZACIÓN
 // ==========================================
 app.post('/api/save-acta', async (req, res) => {
   const { idSharePoint, datosGenerales, acciones, asuntos, sistemas, directorio } = req.body;
@@ -220,7 +220,6 @@ app.post('/api/save-acta', async (req, res) => {
     });
 
     if (datosGenerales.isFinal) {
-      // CONTROL DE OPCIONALIDAD: Solo inyecta si el arreglo contiene registros reales
       if (acciones && acciones.length > 0) {
         for (const item of acciones) {
           await axios.post(`${graphBaseUrl}/${LIST_ID_ACCIONES}/items`, {
@@ -284,7 +283,6 @@ app.post('/api/save-acta', async (req, res) => {
     return res.status(200).json({ success: true });
 
   } catch (error) {
-    console.error("Error detallado en backend al guardar:", error.response?.data || error.message);
     return res.status(500).json({ success: false, detail: error.response?.data?.error || error.message });
   }
 });
