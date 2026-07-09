@@ -41,7 +41,7 @@ async function getMicrosoftGraphToken() {
 }
 
 app.get('/', (req, res) => {
-  res.send('Servidor STC operando con filtrado por CedulaRelacion en todas las sublistas.');
+  res.send('Servidor STC de la Agencia APP operando con tolerancia de variantes en nombres de columna.');
 });
 
 // ==========================================
@@ -152,7 +152,6 @@ app.get('/api/obtener-detalles-hijos', async (req, res) => {
     const graphBaseUrl = `https://graph.microsoft.com/v1.0/sites/${SITE_ID}/lists`;
     const strCedula = String(cedula).trim();
 
-    // 1. Cargar y filtrar Acciones
     const resAcciones = await axios.get(`${graphBaseUrl}/${LIST_ID_ACCIONES}/items?expand=fields`, { headers: { 'Authorization': `Bearer ${token}` } });
     const acciones = resAcciones.data.value
       .filter(item => String(item.fields.CedulaRelacion).trim() === strCedula)
@@ -161,13 +160,12 @@ app.get('/api/obtener-detalles-hijos', async (req, res) => {
         prioridad: item.fields.Prioridad,
         productos: item.fields.Productosentrega,
         accionConocimiento: item.fields.Acci_x00f3_nparalatransferenciad || 'No registrada',
-        ejecucion: item.fields.escribac_x00f3_mosellev_x00f3_a || '',
+        ejecucion: item.fields.escribac_x00f3_mosellev_x00f3_a || item.fields.escribac_x00f3_mosellev_x00f3_ || item.fields.Describac_x00f3_mosellev_x00f3_a || '',
         fecha: item.fields.Fechaenqueseejecut_x00f3_laacci_ || '',
         ruta: item.fields.Ruta_x0028_s_x0029_dondereposa_x,
         obs: item.fields.Observaciones || ''
       }));
 
-    // 2. Cargar y filtrar Asuntos
     const resAsuntos = await axios.get(`${graphBaseUrl}/${LIST_ID_ASUNTOS}/items?expand=fields`, { headers: { 'Authorization': `Bearer ${token}` } });
     const asuntos = resAsuntos.data.value
       .filter(item => String(item.fields.CedulaRelacion).trim() === strCedula)
@@ -179,7 +177,6 @@ app.get('/api/obtener-detalles-hijos', async (req, res) => {
         fecha: item.fields.Fechal_x00ed_mite || ''
       }));
 
-    // 3. Cargar y filtrar Sistemas
     const resSistemas = await axios.get(`${graphBaseUrl}/${LIST_ID_SISTEMAS}/items?expand=fields`, { headers: { 'Authorization': `Bearer ${token}` } });
     const sistemas = resSistemas.data.value
       .filter(item => String(item.fields.CedulaRelacion).trim() === strCedula)
@@ -190,7 +187,6 @@ app.get('/api/obtener-detalles-hijos', async (req, res) => {
         obs: item.fields.Observaciones || ''
       }));
 
-    // 4. Cargar y filtrar Directorio
     const resDirectorio = await axios.get(`${graphBaseUrl}/${LIST_ID_DIRECTORIO}/items?expand=fields`, { headers: { 'Authorization': `Bearer ${token}` } });
     const directorio = resDirectorio.data.value
       .filter(item => String(item.fields.CedulaRelacion).trim() === strCedula)
@@ -249,7 +245,7 @@ app.get('/api/login-contratista', async (req, res) => {
 });
 
 // ==========================================
-// RUTA: SAVE-ACTA CON PERSISTENCIA Y RELACIÓN TRANSACCIONAL
+// RUTA: SAVE-ACTA (FIX COMPLETO DE VARIANTES DE RECORTE DE SHAREPOINT)
 // ==========================================
 app.post('/api/save-acta', async (req, res) => {
   const { idSharePoint, datosGenerales, acciones, asuntos, sistemas, directorio } = req.body;
@@ -260,7 +256,6 @@ app.post('/api/save-acta', async (req, res) => {
     const graphBaseUrl = `https://graph.microsoft.com/v1.0/sites/${SITE_ID}/lists`;
     const strCedula = String(datosGenerales.cedula).trim();
 
-    // 1. Actualizar STC_General
     const generalPayload = {
       fields: {
         Title: datosGenerales.numeroContrato,
@@ -280,23 +275,33 @@ app.post('/api/save-acta', async (req, res) => {
       headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
     });
 
-    // 2. Transacción de Limpieza y Guardado para ACCIONES
     const rAcc = await axios.get(`${graphBaseUrl}/${LIST_ID_ACCIONES}/items?expand=fields`, { headers: { 'Authorization': `Bearer ${token}` } });
     await Promise.all(rAcc.data.value.filter(f => String(f.fields.CedulaRelacion).trim() === strCedula).map(f => 
       axios.delete(`${graphBaseUrl}/${LIST_ID_ACCIONES}/items/${f.id}`, { headers: { 'Authorization': `Bearer ${token}` } })
     ));
+
     if (acciones && acciones.length > 0) {
       for (const item of acciones) {
         const f = {
-          Title: item.proceso, CedulaRelacion: strCedula, Prioridad: item.prioridad, Productosentrega: item.productos,
-          Acci_x00f3_nparalatransferenciad: item.accionConocimiento, escribac_x00f3_mosellev_x00f3_a: item.ejecucion, Ruta_x0028_s_x0029_dondereposa_x: item.ruta, Observaciones: item.obs
+          Title: item.proceso, 
+          CedulaRelacion: strCedula, 
+          Prioridad: item.prioridad, 
+          Productosentrega: item.productos,
+          Acci_x00f3_nparalatransferenciad: item.accionConocimiento, 
+          
+          // SOLUCIÓN PUNTO 2: Multi-Mapeo preventivo de variantes de la columna larga de evidencias
+          escribac_x00f3_mosellev_x00f3_a: item.ejecucion,
+          escribac_x00f3_mosellev_x00f3_: item.ejecucion, 
+          Describac_x00f3_mosellev_x00f3_a: item.ejecucion,
+          
+          Ruta_x0028_s_x0029_dondereposa_x: item.ruta, 
+          Observaciones: item.obs
         };
         if (item.fecha && item.fecha.trim() !== "") f.Fechaenqueseejecut_x00f3_laacci_ = item.fecha;
         await axios.post(`${graphBaseUrl}/${LIST_ID_ACCIONES}/items`, { fields: f }, { headers: { 'Authorization': `Bearer ${token}` } });
       }
     }
 
-    // 3. Transacción de Limpieza y Guardado para ASUNTOS
     const rAsu = await axios.get(`${graphBaseUrl}/${LIST_ID_ASUNTOS}/items?expand=fields`, { headers: { 'Authorization': `Bearer ${token}` } });
     await Promise.all(rAsu.data.value.filter(f => String(f.fields.CedulaRelacion).trim() === strCedula).map(f => 
       axios.delete(`${graphBaseUrl}/${LIST_ID_ASUNTOS}/items/${f.id}`, { headers: { 'Authorization': `Bearer ${token}` } })
@@ -309,7 +314,6 @@ app.post('/api/save-acta', async (req, res) => {
       }
     }
 
-    // 4. Transacción de Limpieza y Guardado para SISTEMAS
     const rSis = await axios.get(`${graphBaseUrl}/${LIST_ID_SISTEMAS}/items?expand=fields`, { headers: { 'Authorization': `Bearer ${token}` } });
     await Promise.all(rSis.data.value.filter(f => String(f.fields.CedulaRelacion).trim() === strCedula).map(f => 
       axios.delete(`${graphBaseUrl}/${LIST_ID_SISTEMAS}/items/${f.id}`, { headers: { 'Authorization': `Bearer ${token}` } })
@@ -321,7 +325,6 @@ app.post('/api/save-acta', async (req, res) => {
       }
     }
 
-    // 5. Transacción de Limpieza y Guardado para DIRECTORIO
     const rDir = await axios.get(`${graphBaseUrl}/${LIST_ID_DIRECTORIO}/items?expand=fields`, { headers: { 'Authorization': `Bearer ${token}` } });
     await Promise.all(rDir.data.value.filter(f => String(f.fields.CedulaRelacion).trim() === strCedula).map(f => 
       axios.delete(`${graphBaseUrl}/${LIST_ID_DIRECTORIO}/items/${f.id}`, { headers: { 'Authorization': `Bearer ${token}` } })
@@ -335,7 +338,9 @@ app.post('/api/save-acta', async (req, res) => {
 
     return res.status(200).json({ success: true });
   } catch (error) {
-    return res.status(500).json({ success: false, detail: error.response?.data?.error || error.message });
+    const apiErrorDetail = error.response?.data?.error || error.message;
+    console.error("Error pormenorizado en save-acta:", JSON.stringify(apiErrorDetail));
+    return res.status(500).json({ success: false, detail: apiErrorDetail });
   }
 });
 
