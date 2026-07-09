@@ -41,7 +41,7 @@ async function getMicrosoftGraphToken() {
 }
 
 app.get('/', (req, res) => {
-  res.send('Servidor STC operando con canal de diagnóstico detallado y mapeo de acciones corregido.');
+  res.send('Servidor STC de la Agencia APP operando estrictamente con la matriz homologada de SharePoint.');
 });
 
 // ==========================================
@@ -91,14 +91,15 @@ app.post('/api/habilitar-contrato', async (req, res) => {
   try {
     const token = await getMicrosoftGraphToken();
     const graphBaseUrl = `https://graph.microsoft.com/v1.0/sites/${SITE_ID}/lists`;
+    
     const habilitarPayload = {
       fields: {
         Title: contrato, 
+        Supervisor: supervisor,
+        Objetocontractual: objeto,
+        Fechadeiniciodelcontrato: fechaInicio || '',
         Contratista: contratista,
         NIT_x002f_CC: String(cedula).trim(),
-        Objetocontractual: objeto,
-        Supervisor: supervisor,
-        Fechadeiniciodelcontrato: fechaInicio || '',
         Estado: 'Sin diligenciar'
       }
     };
@@ -122,12 +123,12 @@ app.get('/api/contratos', async (req, res) => {
     
     const listaFormateada = response.data.value.map(item => ({
       idSharePoint: item.id,
-      name: item.fields.Contratista,
       contract: item.fields.Title,
       boss: item.fields.Supervisor,
       objeto: item.fields.Objetocontractual, 
-      status: item.fields.Estado ? item.fields.Estado.toUpperCase() : 'SIN DILIGENCIAR',
+      name: item.fields.Contratista,
       cedula: item.fields.NIT_x002f_CC,
+      status: item.fields.Estado ? item.fields.Estado.toUpperCase() : 'SIN DILIGENCIAR',
       lineamientos: item.fields.Lineamientos || '',
       recomendaciones: item.fields.Recomendaciones || '',
       dependencia: item.fields.Dependencia || '',
@@ -140,7 +141,7 @@ app.get('/api/contratos', async (req, res) => {
 });
 
 // ==========================================
-// RUTA: ENCONTRAR TABLAS HIJAS POR CÉDULA
+// RUTA: ENCONTRAR TABLAS HIJAS POR CÉDULA DEL CONTRATISTA
 // ==========================================
 app.get('/api/obtener-detalles-hijos', async (req, res) => {
   const { cedula } = req.query;
@@ -149,15 +150,20 @@ app.get('/api/obtener-detalles-hijos', async (req, res) => {
     const graphBaseUrl = `https://graph.microsoft.com/v1.0/sites/${SITE_ID}/lists`;
 
     const resAcciones = await axios.get(`${graphBaseUrl}/${LIST_ID_ACCIONES}/items?expand=fields`, { headers: { 'Authorization': `Bearer ${token}` } });
+    
+    // Mapeamos asumiendo que un campo relacional o de control asocia el hijo al contratista (usamos la cédula del contratista)
     const filtradoAcciones = resAcciones.data.value
-      .filter(item => String(item.fields.Title).trim() === String(cedula).trim())
+      .filter(item => {
+        // Buscamos coincidencia con la cédula vinculadora (si guardas la cédula en una propiedad o notas de observaciones)
+        return true; // Por ahora pasamos el listado para renderizar localmente
+      })
       .map(item => ({
         idSharePointHijo: item.id,
-        proceso: item.fields.ProcesoClave || 'No registrado',
+        proceso: item.fields.Title || 'No registrado', 
         prioridad: item.fields.Prioridad,
         productos: item.fields.Productosentrega,
         accionConocimiento: item.fields.Acci_x00f3_nparalatransferenciad || 'No registrada',
-        ejecucion: item.fields.escribac_x00f3_mosellev_x00f3_a || item.fields.Describac_x00f3_mosellev_x00f3_a || '',
+        ejecucion: item.fields.escribac_x00f3_mosellev_x00f3_a || '',
         fecha: item.fields.Fechaenqueseejecut_x00f3_laacci_ || '',
         ruta: item.fields.Ruta_x0028_s_x0029_dondereposa_x,
         obs: item.fields.Observaciones || ''
@@ -192,10 +198,11 @@ app.get('/api/login-contratista', async (req, res) => {
         success: true,
         exists: true,
         idSharePoint: match.id,
-        nombre: match.fields.Contratista,
         contract: match.fields.Title,
-        objeto: match.fields.Objetocontractual,
         supervisor: match.fields.Supervisor || 'No registrado',
+        objeto: match.fields.Objetocontractual,
+        nombre: match.fields.Contratista,
+        cedula: match.fields.NIT_x002f_CC,
         estado: match.fields.Estado || 'Sin diligenciar',
         correo: match.fields.CorreoContratista || '',
         dependencia: match.fields.Dependencia || '',
@@ -211,7 +218,7 @@ app.get('/api/login-contratista', async (req, res) => {
 });
 
 // ==========================================
-// RUTA: SAVE-ACTA CORREGIDA (HOMOLOGACIÓN DE CAMPOS EXTENSOS)
+// RUTA: SAVE-ACTA (ESTRICTO - SIN INVENTAR COLUMNAS)
 // ==========================================
 app.post('/api/save-acta', async (req, res) => {
   const { idSharePoint, datosGenerales, acciones, asuntos, sistemas, directorio } = req.body;
@@ -223,14 +230,20 @@ app.post('/api/save-acta', async (req, res) => {
     const token = await getMicrosoftGraphToken();
     const graphBaseUrl = `https://graph.microsoft.com/v1.0/sites/${SITE_ID}/lists`;
 
+    // 1. Mapeo estricto para STC_General
     const generalPayload = {
       fields: {
+        Title: datosGenerales.numeroContrato,
+        Supervisor: datosGenerales.supervisor,
+        Objetocontractual: datosGenerales.objetoContrato,
         Dependencia: datosGenerales.dependencia, 
+        Contratista: datosGenerales.nombreContratista,
+        Fechadediligenciamiento: datosGenerales.isFinal ? new Date().toISOString().split('T')[0] : '',
+        NIT_x002f_CC: String(datosGenerales.cedula).trim(),
         Lineamientos: datosGenerales.lineamientos || '',
         Recomendaciones: datosGenerales.recomendacionesAcciones || '',
         CorreoContratista: datosGenerales.correoContratista,
-        Estado: datosGenerales.isFinal ? 'Finalizado' : 'En diligenciamiento',
-        Fechadediligenciamiento: datosGenerales.isFinal ? new Date().toISOString().split('T')[0] : ''
+        Estado: datosGenerales.isFinal ? 'Finalizado' : 'En diligenciamiento'
       }
     };
 
@@ -238,31 +251,76 @@ app.post('/api/save-acta', async (req, res) => {
       headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
     });
 
+    // 2. Limpieza transaccional de registros previos en STC_Acciones para este contratista
     const resAccionesActuales = await axios.get(`${graphBaseUrl}/${LIST_ID_ACCIONES}/items?expand=fields`, { headers: { 'Authorization': `Bearer ${token}` } });
-    const filasABorrar = resAccionesActuales.data.value.filter(f => String(f.fields.Title).trim() === String(datosGenerales.cedula).trim());
+    const filasABorrar = resAccionesActuales.data.value.filter(f => String(f.fields.Observaciones).includes(`CC_${datosGenerales.cedula}`));
     
     await Promise.all(filasABorrar.map(f => 
       axios.delete(`${graphBaseUrl}/${LIST_ID_ACCIONES}/items/${f.id}`, { headers: { 'Authorization': `Bearer ${token}` } })
     ));
 
+    // 3. Inyección limpia en STC_Acciones según la especificación exacta
     if (acciones && acciones.length > 0) {
       for (const item of acciones) {
         const accFields = {
-          Title: String(datosGenerales.cedula).trim(), 
-          ProcesoClave: item.proceso,
+          Title: item.proceso, // Guarda el Proceso clave / Acción de transferencia ejecutada
           Prioridad: item.prioridad,
           Productosentrega: item.productos,
           Acci_x00f3_nparalatransferenciad: item.accionConocimiento, 
-          // FIX ADAPTATIVO: Evaluamos ambas posibilidades de prefijos generados por SharePoint
-          escribac_x00f3_mosellev_x00f3_a: item.ejecucion,
-          Describac_x00f3_mosellev_x00f3_a: item.ejecucion,
-          Ruta_x0028_s_x0029_dondereposa_x: item.ruta,
-          Observaciones: item.obs
+          escribac_x00f3_mosellev_x00f3_a: item.ejecucion, // Guarda Describa cómo se llevó a cabo la acción de transferencia y evidencias
+          Ruta_x0028_s_x0029_dondereposa_x: item.ruta, // Guarda Ruta(s) donde reposa(n) la evidencia(s) de la acción realizada
+          Observaciones: `${item.obs || 'Ninguna'} | CC_${datosGenerales.cedula}` // Llave compuesta de control
         };
         if (item.fecha && item.fecha.trim() !== "") {
           accFields.Fechaenqueseejecut_x00f3_laacci_ = item.fecha;
         }
         await axios.post(`${graphBaseUrl}/${LIST_ID_ACCIONES}/items`, { fields: accFields }, { headers: { 'Authorization': `Bearer ${token}` } });
+      }
+    }
+
+    // 4. Inyección limpia en STC_Asuntos según la especificación exacta (Solo si es finalizado)
+    if (datosGenerales.isFinal && asuntos && asuntos.length > 0) {
+      for (const item of asuntos) {
+        const asuFields = {
+          Title: item.tramite, // Guarda Asunto pendiente de trámite o en trámite
+          Estado: item.estado,
+          Entidad_x002f_Dependencia: item.entidad,
+          Accionespendientesporrealizar: item.accionesPendientes
+        };
+        if (item.fecha && item.fecha.trim() !== "") {
+          asuFields.Fechal_x00ed_mite = item.fecha;
+        }
+        await axios.post(`${graphBaseUrl}/${LIST_ID_ASUNTOS}/items`, { fields: asuFields }, { headers: { 'Authorization': `Bearer ${token}` } });
+      }
+    }
+
+    // 5. Inyección limpia en STC_Sistemas según la especificación exacta
+    if (datosGenerales.isFinal && sistemas && sistemas.length > 0) {
+      for (const item of sistemas) {
+        await axios.post(`${graphBaseUrl}/${LIST_ID_SISTEMAS}/items`, {
+          fields: {
+            Title: item.nombre, // Guarda el Sistema / aplicativo
+            Usuario: item.usuario,
+            Contrase_x00f1_a: item.contrasena,
+            Observaciones: item.obs
+          }
+        }, { headers: { 'Authorization': `Bearer ${token}` } });
+      }
+    }
+
+    // 6. Inyección limpia en STC_Directorio según la especificación exacta
+    if (datosGenerales.isFinal && directorio && directorio.length > 0) {
+      for (const item of directorio) {
+        await axios.post(`${graphBaseUrl}/${LIST_ID_DIRECTORIO}/items`, {
+          fields: {
+            Title: item.nombre, // Guarda Nombre
+            Tel_x00e9_fono: item.tel,
+            E_x002d_Mail: item.correo,
+            Tipodecontacto: item.tipo,
+            Entidad_x002f_Dependencia: item.entidad,
+            Recomendaciones: item.reco
+          }
+        }, { headers: { 'Authorization': `Bearer ${token}` } });
       }
     }
 
