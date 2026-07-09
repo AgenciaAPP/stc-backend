@@ -41,7 +41,7 @@ async function getMicrosoftGraphToken() {
 }
 
 app.get('/', (req, res) => {
-  res.send('Servidor STC de la Agencia APP operando en vivo con persistencia homologada.');
+  res.send('Servidor STC de la Agencia APP operando en vivo con normalización de dependencias.');
 });
 
 // ==========================================
@@ -143,7 +143,7 @@ app.get('/api/contratos', async (req, res) => {
       lineamientos: item.fields.Lineamientos || '',
       recomendaciones: item.fields.Recomendaciones || '',
       dependencia: item.fields.Dependencia || '',
-      correo: item.fields.CorreoContratista || '' // Propiedad homologada para consulta general
+      correo: item.fields.CorreoContratista || ''
     }));
 
     res.json({ success: true, data: listaFormateada });
@@ -191,7 +191,7 @@ app.get('/api/login-contratista', async (req, res) => {
 });
 
 // ==========================================
-// RUTA: PATCH ACTUALIZACIÓN
+// RUTA: PATCH ACTUALIZACIÓN (BLINDADO CONTRA STRING DE FECHAS VACÍAS)
 // ==========================================
 app.post('/api/save-acta', async (req, res) => {
   const { idSharePoint, datosGenerales, acciones, asuntos, sistemas, directorio } = req.body;
@@ -204,9 +204,10 @@ app.post('/api/save-acta', async (req, res) => {
     const token = await getMicrosoftGraphToken();
     const graphBaseUrl = `https://graph.microsoft.com/v1.0/sites/${SITE_ID}/lists`;
 
+    // SOLUCIÓN PUNTO 1: El payload mapea la dependencia de forma directa y limpia tal como viaja del cliente
     const generalPayload = {
       fields: {
-        Dependencia: datosGenerales.dependencia,
+        Dependencia: datosGenerales.dependencia, 
         Lineamientos: datosGenerales.lineamientos || '',
         Recomendaciones: datosGenerales.recomendacionesAcciones || '',
         CorreoContratista: datosGenerales.correoContratista,
@@ -222,32 +223,38 @@ app.post('/api/save-acta', async (req, res) => {
     if (datosGenerales.isFinal) {
       if (acciones && acciones.length > 0) {
         for (const item of acciones) {
-          await axios.post(`${graphBaseUrl}/${LIST_ID_ACCIONES}/items`, {
-            fields: {
-              Title: item.proceso,
-              Prioridad: item.prioridad,
-              Productosentrega: item.productos,
-              Acci_x00f3_nparalatransferenciad: item.accionConocimiento, 
-              escribac_x00f3_mosellev_x00f3_a: item.ejecucion,
-              Fechaenqueseejecut_x00f3_laacci_: item.fecha,
-              Ruta_x0028_s_x0029_dondereposa_x: item.ruta,
-              Observaciones: item.obs
-            }
-          }, { headers: { 'Authorization': `Bearer ${token}` } });
+          const accFields = {
+            Title: item.proceso,
+            Prioridad: item.prioridad,
+            Productosentrega: item.productos,
+            Acci_x00f3_nparalatransferenciad: item.accionConocimiento, 
+            escribac_x00f3_mosellev_x00f3_a: item.ejecucion,
+            Ruta_x0028_s_x0029_dondereposa_x: item.ruta,
+            Observaciones: item.obs
+          };
+          // SOLUCIÓN PUNTO 3: Si la fecha viene vacía, no se adjunta la clave para evitar error 400 en Graph
+          if (item.fecha && item.fecha.trim() !== "") {
+            accFields.Fechaenqueseejecut_x00f3_laacci_ = item.fecha;
+          }
+
+          await axios.post(`${graphBaseUrl}/${LIST_ID_ACCIONES}/items`, { fields: accFields }, { headers: { 'Authorization': `Bearer ${token}` } });
         }
       }
 
       if (asuntos && asuntos.length > 0) {
         for (const item of asuntos) {
-          await axios.post(`${graphBaseUrl}/${LIST_ID_ASUNTOS}/items`, {
-            fields: {
-              Title: item.tramite,
-              Estado: item.estado,
-              Entidad_x002f_Dependencia: item.entidad,
-              Accionespendientesporrealizar: item.accionesPendientes,
-              Fechal_x00ed_mite: item.fecha
-            }
-          }, { headers: { 'Authorization': `Bearer ${token}` } });
+          const asuFields = {
+            Title: item.tramite,
+            Estado: item.estado,
+            Entidad_x002f_Dependencia: item.entidad,
+            Accionespendientesporrealizar: item.accionesPendientes
+          };
+          // SOLUCIÓN PUNTO 3: Sanitización de fecha límite
+          if (item.fecha && item.fecha.trim() !== "") {
+            asuFields.Fechal_x00ed_mite = item.fecha;
+          }
+
+          await axios.post(`${graphBaseUrl}/${LIST_ID_ASUNTOS}/items`, { fields: asuFields }, { headers: { 'Authorization': `Bearer ${token}` } });
         }
       }
 
@@ -283,6 +290,7 @@ app.post('/api/save-acta', async (req, res) => {
     return res.status(200).json({ success: true });
 
   } catch (error) {
+    console.error("Error capturado inyectando:", error.response?.data || error.message);
     return res.status(500).json({ success: false, detail: error.response?.data?.error || error.message });
   }
 });
