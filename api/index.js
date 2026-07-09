@@ -94,7 +94,6 @@ app.get('/api/buscar-secop', async (req, res) => {
         nombre: contratoData.proveedor_adjudicado || "No registrado",
         cedula: contratoData.documento_proveedor || "No registrado",
         objeto: contratoData.objeto_del_contrato || "No registrado",
-        // ASIGNACIÓN CON LAS COLUMNAS EXACTAS QUE ME DISTE
         nombreSupervisor: contratoData.nombre_supervisor || "No registrado",
         cedulaSupervisor: contratoData.n_mero_de_documento_supervisor || "No registrado"
       });
@@ -201,8 +200,13 @@ app.post('/api/save-acta', async (req, res) => {
     return res.status(200).json({ success: true, message: '¡Acta sincronizada con éxito en SharePoint!' });
 
   } catch (error) {
-    console.error('Error inyectando en SharePoint:', error.response?.data || error.message);
-    return res.status(500).json({ success: false, message: 'Error interno de comunicación con Microsoft Graph.' });
+    const apiErrorDetail = error.response?.data?.error || error.message;
+    console.error('Error detallado inyectando en SharePoint:', JSON.stringify(apiErrorDetail));
+    return res.status(500).json({ 
+      success: false, 
+      message: 'Error interno de comunicación con Microsoft Graph.',
+      detail: apiErrorDetail 
+    });
   }
 });
 
