@@ -75,10 +75,12 @@ app.get('/api/buscar-secop', async (req, res) => {
       return res.status(400).json({ success: false, message: "Falta el parámetro 'contrato' en la consulta" });
     }
 
+    // NIT oficial de la Agencia APP
     const nitAgenciaAPP = "900623766"; 
-    const secopUrl = `https://datos.gov.co/resource/jzye-7urr.json?numero_de_contrato=${encodeURIComponent(contrato)}&nit_de_la_entidad=${nitAgenciaAPP}`;
     
-    // Agregamos un User-Agent real para evitar que el Web Application Firewall (WAF) del gobierno rebote la petición de Vercel
+    // CORRECCIÓN KEY: Dataset oficial SECOP II (jbjy-vk9h) y parámetros correctos (referencia_del_contrato y nit_entidad)
+    const secopUrl = `https://www.datos.gov.co/resource/jbjy-vk9h.json?referencia_del_contrato=${encodeURIComponent(contrato)}&nit_entidad=${nitAgenciaAPP}`;
+    
     const response = await axios.get(secopUrl, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
@@ -86,15 +88,15 @@ app.get('/api/buscar-secop', async (req, res) => {
     });
     
     if (response.data && response.data.length > 0) {
-      const dataContrato = response.data[0];
+      const contratoData = response.data[0];
       res.json({
         success: true,
-        nombre: dataContrato.nombre_o_razon_social_del_contratista || "No registrado",
-        cedula: dataContrato.documento_del_contratista || "No registrado",
-        objeto: dataContrato.objeto_del_contrato || "No registrado"
+        nombre: contratoData.proveedor_adjudicado || "No registrado",
+        cedula: contratoData.documento_proveedor || "No registrado",
+        objeto: contratoData.objeto_del_contrato || "No registrado"
       });
     } else {
-      res.json({ success: false, message: "Contrato no encontrado en SECOP II para la Agencia APP." });
+      res.json({ success: false, message: "No se encontró ningún contrato con esa referencia asignado a la Agencia APP en SECOP II." });
     }
   } catch (error) {
     console.error("Error detallado consultando SECOP II:", error.response?.data || error.message);
