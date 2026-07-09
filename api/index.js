@@ -40,8 +40,19 @@ async function getMicrosoftGraphToken() {
   }
 }
 
+// Función auxiliar para normalizar enlaces URL y evitar el rebote de SharePoint
+function normalizarUrlEvidencia(inputUrl) {
+  if (!inputUrl) return "https://agenciaapp.gov.co";
+  const textoLimpio = String(inputUrl).trim();
+  if (textoLimpio.startsWith('http://') || textoLimpio.startsWith('https://')) {
+    return textoLimpio;
+  }
+  // Si digitan texto plano (ej: "a" o "por definir"), lo envolvemos para que SharePoint lo valide como URL sin fallar
+  return `https://agenciaapp.gov.co?evidencia=${encodeURIComponent(textoLimpio)}`;
+}
+
 app.get('/', (req, res) => {
-  res.send('Servidor STC de la Agencia APP operando con nombres internos validados.');
+  res.send('Servidor STC de la Agencia APP operando con sanitización de URLs.');
 });
 
 // ==========================================
@@ -245,7 +256,7 @@ app.get('/api/login-contratista', async (req, res) => {
 });
 
 // ==========================================
-// RUTA: SAVE-ACTA (SOLUCIÓN DEFINITIVA DE COLUMNA)
+// RUTA: SAVE-ACTA (SANITISED AGENCIA APP)
 // ==========================================
 app.post('/api/save-acta', async (req, res) => {
   const { idSharePoint, datosGenerales, acciones, asuntos, sistemas, directorio } = req.body;
@@ -271,7 +282,8 @@ app.post('/api/save-acta', async (req, res) => {
         Estado: datosGenerales.isFinal ? 'Finalizado' : 'En diligenciamiento'
       }
     };
-    await axios.patch(`${generalPayload}`, null); // Control base
+    
+    // Eliminado el axios.patch erróneo que causaba conflicto técnico de red
     await axios.patch(`${graphBaseUrl}/${LIST_ID_GENERAL}/items/${idSharePoint}`, generalPayload, {
       headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
     });
@@ -289,11 +301,9 @@ app.post('/api/save-acta', async (req, res) => {
           Prioridad: item.prioridad, 
           Productosentrega: item.productos,
           Acci_x00f3_nparalatransferenciad: item.accionConocimiento, 
-          
-          // SOLUCIÓN PUNTO 1: Nombre técnico exacto recortado por la base de datos de SharePoint
           escribac_x00f3_mosellev_x00f3_: item.ejecucion, 
-          
-          Ruta_x0028_s_x0029_dondereposa_x: item.ruta, 
+          // Sanitizamos la URL para que no cause rechazo de Graph si digitan texto libre plano
+          Ruta_x0028_s_x0029_dondereposa_x: normalizarUrlEvidencia(item.ruta), 
           Observaciones: item.obs
         };
         if (item.fecha && item.fecha.trim() !== "") f.Fechaenqueseejecut_x00f3_laacci_ = item.fecha;
@@ -338,6 +348,7 @@ app.post('/api/save-acta', async (req, res) => {
     return res.status(200).json({ success: true });
   } catch (error) {
     const apiErrorDetail = error.response?.data?.error || error.message;
+    console.error("Error pormenorizado en save-acta:", JSON.stringify(apiErrorDetail));
     return res.status(500).json({ success: false, detail: apiErrorDetail });
   }
 });
