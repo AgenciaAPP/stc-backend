@@ -41,7 +41,7 @@ async function getMicrosoftGraphToken() {
 }
 
 app.get('/', (req, res) => {
-  res.send('Servidor STC de la Agencia APP operando estrictamente con la matriz homologada de SharePoint.');
+  res.send('Servidor STC operando con filtrado por CedulaRelacion en todas las sublistas.');
 });
 
 // ==========================================
@@ -141,25 +141,23 @@ app.get('/api/contratos', async (req, res) => {
 });
 
 // ==========================================
-// RUTA: ENCONTRAR TABLAS HIJAS POR CÉDULA DEL CONTRATISTA
+// RUTA: OBTENER DETALLES HIJOS FILTRADOS POR CEDULARELACION
 // ==========================================
 app.get('/api/obtener-detalles-hijos', async (req, res) => {
   const { cedula } = req.query;
+  if (!cedula) return res.status(400).json({ success: false, message: "Falta la cédula." });
+
   try {
     const token = await getMicrosoftGraphToken();
     const graphBaseUrl = `https://graph.microsoft.com/v1.0/sites/${SITE_ID}/lists`;
+    const strCedula = String(cedula).trim();
 
+    // 1. Cargar y filtrar Acciones
     const resAcciones = await axios.get(`${graphBaseUrl}/${LIST_ID_ACCIONES}/items?expand=fields`, { headers: { 'Authorization': `Bearer ${token}` } });
-    
-    // Mapeamos asumiendo que un campo relacional o de control asocia el hijo al contratista (usamos la cédula del contratista)
-    const filtradoAcciones = resAcciones.data.value
-      .filter(item => {
-        // Buscamos coincidencia con la cédula vinculadora (si guardas la cédula en una propiedad o notas de observaciones)
-        return true; // Por ahora pasamos el listado para renderizar localmente
-      })
+    const acciones = resAcciones.data.value
+      .filter(item => String(item.fields.CedulaRelacion).trim() === strCedula)
       .map(item => ({
-        idSharePointHijo: item.id,
-        proceso: item.fields.Title || 'No registrado', 
+        proceso: item.fields.Title,
         prioridad: item.fields.Prioridad,
         productos: item.fields.Productosentrega,
         accionConocimiento: item.fields.Acci_x00f3_nparalatransferenciad || 'No registrada',
@@ -169,10 +167,43 @@ app.get('/api/obtener-detalles-hijos', async (req, res) => {
         obs: item.fields.Observaciones || ''
       }));
 
-    res.json({
-      success: true,
-      acciones: filtradoAcciones
-    });
+    // 2. Cargar y filtrar Asuntos
+    const resAsuntos = await axios.get(`${graphBaseUrl}/${LIST_ID_ASUNTOS}/items?expand=fields`, { headers: { 'Authorization': `Bearer ${token}` } });
+    const asuntos = resAsuntos.data.value
+      .filter(item => String(item.fields.CedulaRelacion).trim() === strCedula)
+      .map(item => ({
+        tramite: item.fields.Title,
+        estado: item.fields.Estado,
+        entidad: item.fields.Entidad_x002f_Dependencia,
+        accionesPendientes: item.fields.Accionespendientesporrealizar,
+        fecha: item.fields.Fechal_x00ed_mite || ''
+      }));
+
+    // 3. Cargar y filtrar Sistemas
+    const resSistemas = await axios.get(`${graphBaseUrl}/${LIST_ID_SISTEMAS}/items?expand=fields`, { headers: { 'Authorization': `Bearer ${token}` } });
+    const sistemas = resSistemas.data.value
+      .filter(item => String(item.fields.CedulaRelacion).trim() === strCedula)
+      .map(item => ({
+        nombre: item.fields.Title,
+        usuario: item.fields.Usuario,
+        contrasena: item.fields.Contrase_x00f1_a,
+        obs: item.fields.Observaciones || ''
+      }));
+
+    // 4. Cargar y filtrar Directorio
+    const resDirectorio = await axios.get(`${graphBaseUrl}/${LIST_ID_DIRECTORIO}/items?expand=fields`, { headers: { 'Authorization': `Bearer ${token}` } });
+    const directorio = resDirectorio.data.value
+      .filter(item => String(item.fields.CedulaRelacion).trim() === strCedula)
+      .map(item => ({
+        nombre: item.fields.Title,
+        tel: item.fields.Tel_x00e9_fono,
+        correo: item.fields.E_x002d_Mail,
+        tipo: item.fields.Tipodecontacto,
+        entidad: item.fields.Entidad_x002f_Dependencia,
+        reco: item.fields.Recomendaciones || ''
+      }));
+
+    res.json({ success: true, acciones, asuntos, sistemas, directorio });
   } catch (error) {
     res.status(500).json({ success: false, detail: error.message });
   }
@@ -218,19 +249,18 @@ app.get('/api/login-contratista', async (req, res) => {
 });
 
 // ==========================================
-// RUTA: SAVE-ACTA (ESTRICTO - SIN INVENTAR COLUMNAS)
+// RUTA: SAVE-ACTA CON PERSISTENCIA Y RELACIÓN TRANSACCIONAL
 // ==========================================
 app.post('/api/save-acta', async (req, res) => {
   const { idSharePoint, datosGenerales, acciones, asuntos, sistemas, directorio } = req.body;
-  if (!idSharePoint) {
-    return res.status(400).json({ success: false, message: 'Falta el identificador de registro.' });
-  }
+  if (!idSharePoint) return res.status(400).json({ success: false, message: 'Falta el ID de registro.' });
 
   try {
     const token = await getMicrosoftGraphToken();
     const graphBaseUrl = `https://graph.microsoft.com/v1.0/sites/${SITE_ID}/lists`;
+    const strCedula = String(datosGenerales.cedula).trim();
 
-    // 1. Mapeo estricto para STC_General
+    // 1. Actualizar STC_General
     const generalPayload = {
       fields: {
         Title: datosGenerales.numeroContrato,
@@ -239,100 +269,73 @@ app.post('/api/save-acta', async (req, res) => {
         Dependencia: datosGenerales.dependencia, 
         Contratista: datosGenerales.nombreContratista,
         Fechadediligenciamiento: datosGenerales.isFinal ? new Date().toISOString().split('T')[0] : '',
-        NIT_x002f_CC: String(datosGenerales.cedula).trim(),
+        NIT_x002f_CC: strCedula,
         Lineamientos: datosGenerales.lineamientos || '',
         Recomendaciones: datosGenerales.recomendacionesAcciones || '',
         CorreoContratista: datosGenerales.correoContratista,
         Estado: datosGenerales.isFinal ? 'Finalizado' : 'En diligenciamiento'
       }
     };
-
     await axios.patch(`${graphBaseUrl}/${LIST_ID_GENERAL}/items/${idSharePoint}`, generalPayload, {
       headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
     });
 
-    // 2. Limpieza transaccional de registros previos en STC_Acciones para este contratista
-    const resAccionesActuales = await axios.get(`${graphBaseUrl}/${LIST_ID_ACCIONES}/items?expand=fields`, { headers: { 'Authorization': `Bearer ${token}` } });
-    const filasABorrar = resAccionesActuales.data.value.filter(f => String(f.fields.Observaciones).includes(`CC_${datosGenerales.cedula}`));
-    
-    await Promise.all(filasABorrar.map(f => 
+    // 2. Transacción de Limpieza y Guardado para ACCIONES
+    const rAcc = await axios.get(`${graphBaseUrl}/${LIST_ID_ACCIONES}/items?expand=fields`, { headers: { 'Authorization': `Bearer ${token}` } });
+    await Promise.all(rAcc.data.value.filter(f => String(f.fields.CedulaRelacion).trim() === strCedula).map(f => 
       axios.delete(`${graphBaseUrl}/${LIST_ID_ACCIONES}/items/${f.id}`, { headers: { 'Authorization': `Bearer ${token}` } })
     ));
-
-    // 3. Inyección limpia en STC_Acciones según la especificación exacta
     if (acciones && acciones.length > 0) {
       for (const item of acciones) {
-        const accFields = {
-          Title: item.proceso, // Guarda el Proceso clave / Acción de transferencia ejecutada
-          Prioridad: item.prioridad,
-          Productosentrega: item.productos,
-          Acci_x00f3_nparalatransferenciad: item.accionConocimiento, 
-          escribac_x00f3_mosellev_x00f3_a: item.ejecucion, // Guarda Describa cómo se llevó a cabo la acción de transferencia y evidencias
-          Ruta_x0028_s_x0029_dondereposa_x: item.ruta, // Guarda Ruta(s) donde reposa(n) la evidencia(s) de la acción realizada
-          Observaciones: `${item.obs || 'Ninguna'} | CC_${datosGenerales.cedula}` // Llave compuesta de control
+        const f = {
+          Title: item.proceso, CedulaRelacion: strCedula, Prioridad: item.prioridad, Productosentrega: item.productos,
+          Acci_x00f3_nparalatransferenciad: item.accionConocimiento, escribac_x00f3_mosellev_x00f3_a: item.ejecucion, Ruta_x0028_s_x0029_dondereposa_x: item.ruta, Observaciones: item.obs
         };
-        if (item.fecha && item.fecha.trim() !== "") {
-          accFields.Fechaenqueseejecut_x00f3_laacci_ = item.fecha;
-        }
-        await axios.post(`${graphBaseUrl}/${LIST_ID_ACCIONES}/items`, { fields: accFields }, { headers: { 'Authorization': `Bearer ${token}` } });
+        if (item.fecha && item.fecha.trim() !== "") f.Fechaenqueseejecut_x00f3_laacci_ = item.fecha;
+        await axios.post(`${graphBaseUrl}/${LIST_ID_ACCIONES}/items`, { fields: f }, { headers: { 'Authorization': `Bearer ${token}` } });
       }
     }
 
-    // 4. Inyección limpia en STC_Asuntos según la especificación exacta (Solo si es finalizado)
-    if (datosGenerales.isFinal && asuntos && asuntos.length > 0) {
+    // 3. Transacción de Limpieza y Guardado para ASUNTOS
+    const rAsu = await axios.get(`${graphBaseUrl}/${LIST_ID_ASUNTOS}/items?expand=fields`, { headers: { 'Authorization': `Bearer ${token}` } });
+    await Promise.all(rAsu.data.value.filter(f => String(f.fields.CedulaRelacion).trim() === strCedula).map(f => 
+      axios.delete(`${graphBaseUrl}/${LIST_ID_ASUNTOS}/items/${f.id}`, { headers: { 'Authorization': `Bearer ${token}` } })
+    ));
+    if (asuntos && asuntos.length > 0) {
       for (const item of asuntos) {
-        const asuFields = {
-          Title: item.tramite, // Guarda Asunto pendiente de trámite o en trámite
-          Estado: item.estado,
-          Entidad_x002f_Dependencia: item.entidad,
-          Accionespendientesporrealizar: item.accionesPendientes
-        };
-        if (item.fecha && item.fecha.trim() !== "") {
-          asuFields.Fechal_x00ed_mite = item.fecha;
-        }
-        await axios.post(`${graphBaseUrl}/${LIST_ID_ASUNTOS}/items`, { fields: asuFields }, { headers: { 'Authorization': `Bearer ${token}` } });
+        const f = { Title: item.tramite, CedulaRelacion: strCedula, Estado: item.estado, Entidad_x002f_Dependencia: item.entidad, Accionespendientesporrealizar: item.accionesPendientes };
+        if (item.fecha && item.fecha.trim() !== "") f.Fechal_x00ed_mite = item.fecha;
+        await axios.post(`${graphBaseUrl}/${LIST_ID_ASUNTOS}/items`, { fields: f }, { headers: { 'Authorization': `Bearer ${token}` } });
       }
     }
 
-    // 5. Inyección limpia en STC_Sistemas según la especificación exacta
-    if (datosGenerales.isFinal && sistemas && sistemas.length > 0) {
+    // 4. Transacción de Limpieza y Guardado para SISTEMAS
+    const rSis = await axios.get(`${graphBaseUrl}/${LIST_ID_SISTEMAS}/items?expand=fields`, { headers: { 'Authorization': `Bearer ${token}` } });
+    await Promise.all(rSis.data.value.filter(f => String(f.fields.CedulaRelacion).trim() === strCedula).map(f => 
+      axios.delete(`${graphBaseUrl}/${LIST_ID_SISTEMAS}/items/${f.id}`, { headers: { 'Authorization': `Bearer ${token}` } })
+    ));
+    if (sistemas && sistemas.length > 0) {
       for (const item of sistemas) {
-        await axios.post(`${graphBaseUrl}/${LIST_ID_SISTEMAS}/items`, {
-          fields: {
-            Title: item.nombre, // Guarda el Sistema / aplicativo
-            Usuario: item.usuario,
-            Contrase_x00f1_a: item.contrasena,
-            Observaciones: item.obs
-          }
-        }, { headers: { 'Authorization': `Bearer ${token}` } });
+        const f = { Title: item.nombre, CedulaRelacion: strCedula, Usuario: item.usuario, Contrase_x00f1_a: item.contrasena, Observaciones: item.obs };
+        await axios.post(`${graphBaseUrl}/${LIST_ID_SISTEMAS}/items`, { fields: f }, { headers: { 'Authorization': `Bearer ${token}` } });
       }
     }
 
-    // 6. Inyección limpia en STC_Directorio según la especificación exacta
-    if (datosGenerales.isFinal && directorio && directorio.length > 0) {
+    // 5. Transacción de Limpieza y Guardado para DIRECTORIO
+    const rDir = await axios.get(`${graphBaseUrl}/${LIST_ID_DIRECTORIO}/items?expand=fields`, { headers: { 'Authorization': `Bearer ${token}` } });
+    await Promise.all(rDir.data.value.filter(f => String(f.fields.CedulaRelacion).trim() === strCedula).map(f => 
+      axios.delete(`${graphBaseUrl}/${LIST_ID_DIRECTORIO}/items/${f.id}`, { headers: { 'Authorization': `Bearer ${token}` } })
+    ));
+    if (directorio && directorio.length > 0) {
       for (const item of directorio) {
-        await axios.post(`${graphBaseUrl}/${LIST_ID_DIRECTORIO}/items`, {
-          fields: {
-            Title: item.nombre, // Guarda Nombre
-            Tel_x00e9_fono: item.tel,
-            E_x002d_Mail: item.correo,
-            Tipodecontacto: item.tipo,
-            Entidad_x002f_Dependencia: item.entidad,
-            Recomendaciones: item.reco
-          }
-        }, { headers: { 'Authorization': `Bearer ${token}` } });
+        const f = { Title: item.nombre, CedulaRelacion: strCedula, Tel_x00e9_fono: item.tel, E_x002d_Mail: item.correo, Tipodecontacto: item.tipo, Entidad_x002f_Dependencia: item.entidad, Recomendaciones: item.reco };
+        await axios.post(`${graphBaseUrl}/${LIST_ID_DIRECTORIO}/items`, { fields: f }, { headers: { 'Authorization': `Bearer ${token}` } });
       }
     }
 
     return res.status(200).json({ success: true });
   } catch (error) {
-    const apiErrorDetail = error.response?.data?.error || error.message;
-    console.error("Error pormenorizado en save-acta:", JSON.stringify(apiErrorDetail));
-    return res.status(500).json({ 
-      success: false, 
-      message: 'Rechazo de persistencia en sublistas.',
-      detail: apiErrorDetail 
-    });
+    return res.status(500).json({ success: false, detail: error.response?.data?.error || error.message });
   }
 });
 
