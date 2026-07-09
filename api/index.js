@@ -45,13 +45,13 @@ app.get('/', (req, res) => {
 });
 
 // ==========================================
-// RUTA: CONSULTAR SECOP II (Y LIMPIAR FECHA ISO)
+// RUTA: CONSULTAR SECOP II
 // ==========================================
 app.get('/api/buscar-secop', async (req, res) => {
   try {
     const { contrato } = req.query;
     if (!contrato) {
-      return res.status(400).json({ success: false, message: "Falta el parámetro 'contrato'en la consulta" });
+      return res.status(400).json({ success: false, message: "Falta el parámetro 'contrato' en la consulta" });
     }
 
     const nitAgenciaAPP = "900623766"; 
@@ -64,7 +64,6 @@ app.get('/api/buscar-secop', async (req, res) => {
     if (response.data && response.data.length > 0) {
       const contratoData = response.data[0];
       
-      // Limpieza de formato de fecha para evitar el sufijo T00:00:00.000
       let fechaLimpia = contratoData.fecha_de_firma || null;
       if (fechaLimpia && fechaLimpia.includes('T')) {
         fechaLimpia = fechaLimpia.split('T')[0];
@@ -124,7 +123,7 @@ app.post('/api/habilitar-contrato', async (req, res) => {
 });
 
 // ==========================================
-// PASO B: OBTENER TODOS LOS CONTRATOS EN VIVO PARA MONITOREO
+// RUTA: OBTENER TODOS LOS CONTRATOS EN VIVO PARA MONITOREO
 // ==========================================
 app.get('/api/contratos', async (req, res) => {
   try {
@@ -149,16 +148,22 @@ app.get('/api/contratos', async (req, res) => {
 });
 
 // ==========================================
-// PASO C: VALIDAR LOGIN DEL CONTRATISTA DESDE SHAREPOINT
+// FIX REQUERIDO: VALIDAR LOGIN DEL CONTRATISTA CON EVENTUAL CONSISTENCY
 // ==========================================
 app.get('/api/login-contratista', async (req, res) => {
   const { cedula } = req.query;
   try {
     const token = await getMicrosoftGraphToken();
-    // Consultamos y filtramos usando OData expand en el campo del NIT_x002f_CC
-    const url = `https://graph.microsoft.com/v1.0/sites/${SITE_ID}/lists/${LIST_ID_GENERAL}/items?expand=fields&$filter=fields/NIT_x002f_CC eq '${cedula}'`;
     
-    const response = await axios.get(url, { headers: { 'Authorization': `Bearer ${token}` } });
+    // Se agregan las directivas obligatorias de Microsoft Graph para filtros avanzados ($count=true y ConsistencyLevel)
+    const url = `https://graph.microsoft.com/v1.0/sites/${SITE_ID}/lists/${LIST_ID_GENERAL}/items?expand=fields&$filter=fields/NIT_x002f_CC eq '${cedula}'&$count=true`;
+    
+    const response = await axios.get(url, { 
+      headers: { 
+        'Authorization': `Bearer ${token}`,
+        'ConsistencyLevel': 'eventual'
+      } 
+    });
     
     if (response.data.value && response.data.value.length > 0) {
       const match = response.data.value[0];
@@ -177,12 +182,12 @@ app.get('/api/login-contratista', async (req, res) => {
       res.json({ success: true, exists: false });
     }
   } catch (error) {
-    res.status(500).json({ success: false, detail: error.message });
+    res.status(500).json({ success: false, detail: error.response?.data?.error || error.message });
   }
 });
 
 // ==========================================
-// PASO D: ACTUALIZACIÓN POR PATCH (GUARDAR PROGRESO / FINALIZAR)
+// RUTA: ACTUALIZACIÓN POR PATCH (GUARDAR PROGRESO / FINALIZAR)
 // ==========================================
 app.post('/api/save-acta', async (req, res) => {
   const { idSharePoint, datosGenerales, acciones, asuntos, sistemas, directorio } = req.body;
@@ -195,7 +200,6 @@ app.post('/api/save-acta', async (req, res) => {
     const token = await getMicrosoftGraphToken();
     const graphBaseUrl = `https://graph.microsoft.com/v1.0/sites/${SITE_ID}/lists`;
 
-    // EJECUTA UN PATCH PARA ACTUALIZAR LA FILA PREEXISTENTE HOMOLOGADA
     const generalPayload = {
       fields: {
         Dependencia: datosGenerales.dependencia,
@@ -211,7 +215,6 @@ app.post('/api/save-acta', async (req, res) => {
       headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
     });
 
-    // Si se le da Finalizar, inyectamos los multirregistros en cascada
     if (datosGenerales.isFinal) {
       for (const item of acciones) {
         await axios.post(`${graphBaseUrl}/${LIST_ID_ACCIONES}/items`, {
