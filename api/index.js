@@ -41,34 +41,35 @@ async function getMicrosoftGraphToken() {
 }
 
 app.get('/', (req, res) => {
-  res.send('Servidor STC de la Agencia APP operando correctamente con columnas de SharePoint homologadas.');
-});
-
-app.get('/api/status', (req, res) => {
-  res.json({ status: "online", timestamp: new Date() });
+  res.send('Servidor STC de la Agencia APP operando en vivo con consultas dinámicas.');
 });
 
 // ==========================================
-// RUTA: CONSULTAR SECOP II 
+// RUTA: CONSULTAR SECOP II (Y LIMPIAR FECHA ISO)
 // ==========================================
 app.get('/api/buscar-secop', async (req, res) => {
   try {
     const { contrato } = req.query;
     if (!contrato) {
-      return res.status(400).json({ success: false, message: "Falta el parámetro 'contrato' en la consulta" });
+      return res.status(400).json({ success: false, message: "Falta el parámetro 'contrato'en la consulta" });
     }
 
     const nitAgenciaAPP = "900623766"; 
     const secopUrl = `https://www.datos.gov.co/resource/jbjy-vk9h.json?referencia_del_contrato=${encodeURIComponent(contrato)}&nit_entidad=${nitAgenciaAPP}`;
     
     const response = await axios.get(secopUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
-      }
+      headers: { 'User-Agent': 'Mozilla/5.0' }
     });
     
     if (response.data && response.data.length > 0) {
       const contratoData = response.data[0];
+      
+      // Limpieza de formato de fecha para evitar el sufijo T00:00:00.000
+      let fechaLimpia = contratoData.fecha_de_firma || null;
+      if (fechaLimpia && fechaLimpia.includes('T')) {
+        fechaLimpia = fechaLimpia.split('T')[0];
+      }
+
       res.json({
         success: true,
         nombre: contratoData.proveedor_adjudicado || "No registrado",
@@ -76,25 +77,24 @@ app.get('/api/buscar-secop', async (req, res) => {
         objeto: contratoData.objeto_del_contrato || "No registrado",
         nombreSupervisor: contratoData.nombre_supervisor || "No registrado",
         cedulaSupervisor: contratoData.n_mero_de_documento_supervisor || "No registrado",
-        fechaFirma: contratoData.fecha_de_firma || null
+        fechaFirma: fechaLimpia
       });
     } else {
-      res.json({ success: false, message: "No se encontró ningún contrato con esa referencia asignado a la Agencia APP en SECOP II." });
+      res.json({ success: false, message: "No se encontró ningún contrato con esa referencia en SECOP II." });
     }
   } catch (error) {
-    console.error("Error consultando SECOP II:", error.message);
-    res.status(500).json({ success: false, message: "Error al conectarse con el servidor gubernamental." });
+    res.status(500).json({ success: false, message: "Error al conectarse con el SECOP II." });
   }
 });
 
 // ==========================================
-// PASO A: CREACIÓN INICIAL POR TALENTO HUMANO (HABILITACIÓN)
+// RUTA: CREACIÓN INICIAL POR TALENTO HUMANO (HABILITACIÓN)
 // ==========================================
 app.post('/api/habilitar-contrato', async (req, res) => {
   const { contrato, contratista, cedula, objeto, supervisor, fechaInicio } = req.body;
 
   if (!contrato || !cedula) {
-    return res.status(400).json({ success: false, message: 'Faltan datos obligatorios para habilitar el contrato.' });
+    return res.status(400).json({ success: false, message: 'Faltan datos obligatorios.' });
   }
 
   try {
@@ -117,48 +117,101 @@ app.post('/api/habilitar-contrato', async (req, res) => {
       headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
     });
 
-    return res.status(200).json({ success: true, message: 'Contrato habilitado e inyectado con éxito en SharePoint.' });
+    return res.status(200).json({ success: true });
   } catch (error) {
-    const apiErrorDetail = error.response?.data?.error || error.message;
-    console.error('Error al habilitar en SharePoint:', JSON.stringify(apiErrorDetail));
-    return res.status(500).json({ success: false, message: 'Error al registrar habilitación en Graph.', detail: apiErrorDetail });
+    return res.status(500).json({ success: false, detail: error.response?.data?.error || error.message });
   }
 });
 
 // ==========================================
-// RUTA: PERSISTENCIA COMPLETA EN SHAREPOINT (FINALIZAR Y ENVIAR)
+// PASO B: OBTENER TODOS LOS CONTRATOS EN VIVO PARA MONITOREO
+// ==========================================
+app.get('/api/contratos', async (req, res) => {
+  try {
+    const token = await getMicrosoftGraphToken();
+    const url = `https://graph.microsoft.com/v1.0/sites/${SITE_ID}/lists/${LIST_ID_GENERAL}/items?expand=fields`;
+    
+    const response = await axios.get(url, { headers: { 'Authorization': `Bearer ${token}` } });
+    
+    const listaFormateada = response.data.value.map(item => ({
+      idSharePoint: item.id,
+      name: item.fields.Contratista,
+      contract: item.fields.Title,
+      boss: item.fields.Supervisor,
+      status: item.fields.Estado ? item.fields.Estado.toUpperCase() : 'SIN DILIGENCIAR',
+      cedula: item.fields.NIT_x002f_CC
+    }));
+
+    res.json({ success: true, data: listaFormateada });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Error trayendo datos de SharePoint.' });
+  }
+});
+
+// ==========================================
+// PASO C: VALIDAR LOGIN DEL CONTRATISTA DESDE SHAREPOINT
+// ==========================================
+app.get('/api/login-contratista', async (req, res) => {
+  const { cedula } = req.query;
+  try {
+    const token = await getMicrosoftGraphToken();
+    // Consultamos y filtramos usando OData expand en el campo del NIT_x002f_CC
+    const url = `https://graph.microsoft.com/v1.0/sites/${SITE_ID}/lists/${LIST_ID_GENERAL}/items?expand=fields&$filter=fields/NIT_x002f_CC eq '${cedula}'`;
+    
+    const response = await axios.get(url, { headers: { 'Authorization': `Bearer ${token}` } });
+    
+    if (response.data.value && response.data.value.length > 0) {
+      const match = response.data.value[0];
+      res.json({
+        success: true,
+        exists: true,
+        idSharePoint: match.id,
+        nombre: match.fields.Contratista,
+        contract: match.fields.Title,
+        objeto: match.fields.Objetocontractual,
+        estado: match.fields.Estado || 'Sin diligenciar',
+        correo: match.fields.CorreoContratista || '',
+        dependencia: match.fields.Dependencia || ''
+      });
+    } else {
+      res.json({ success: true, exists: false });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, detail: error.message });
+  }
+});
+
+// ==========================================
+// PASO D: ACTUALIZACIÓN POR PATCH (GUARDAR PROGRESO / FINALIZAR)
 // ==========================================
 app.post('/api/save-acta', async (req, res) => {
-  const { datosGenerales, acciones, asuntos, sistemas, directorio } = req.body;
+  const { idSharePoint, datosGenerales, acciones, asuntos, sistemas, directorio } = req.body;
 
-  if (!datosGenerales || !datosGenerales.numeroContrato) {
-    return res.status(400).json({ success: false, message: 'Faltan los datos contractuales mínimos.' });
+  if (!idSharePoint) {
+    return res.status(400).json({ success: false, message: 'Falta el identificador de registro de SharePoint.' });
   }
 
   try {
     const token = await getMicrosoftGraphToken();
     const graphBaseUrl = `https://graph.microsoft.com/v1.0/sites/${SITE_ID}/lists`;
 
+    // EJECUTA UN PATCH PARA ACTUALIZAR LA FILA PREEXISTENTE HOMOLOGADA
     const generalPayload = {
       fields: {
-        Title: datosGenerales.numeroContrato, 
-        Supervisor: datosGenerales.supervisor,
-        Objetocontractual: datosGenerales.objetoContrato,
-        Fechadeiniciodelcontrato: datosGenerales.fechaInicio || '', 
         Dependencia: datosGenerales.dependencia,
-        Contratista: datosGenerales.nombreContratista,
-        Fechadediligenciamiento: datosGenerales.isFinal ? new Date().toISOString().split('T')[0] : '',
-        NIT_x002f_CC: datosGenerales.cedula,
         Lineamientos: datosGenerales.lineamientos || '',
         Recomendaciones: datosGenerales.recomendacionesAcciones || '',
         CorreoContratista: datosGenerales.correoContratista,
-        Estado: datosGenerales.isFinal ? 'Finalizado' : 'En diligenciamiento'
+        Estado: datosGenerales.isFinal ? 'Finalizado' : 'En diligenciamiento',
+        Fechadediligenciamiento: datosGenerales.isFinal ? new Date().toISOString().split('T')[0] : ''
       }
     };
-    await axios.post(`${graphBaseUrl}/${LIST_ID_GENERAL}/items`, generalPayload, {
+
+    await axios.patch(`${graphBaseUrl}/${LIST_ID_GENERAL}/items/${idSharePoint}`, generalPayload, {
       headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
     });
 
+    // Si se le da Finalizar, inyectamos los multirregistros en cascada
     if (datosGenerales.isFinal) {
       for (const item of acciones) {
         await axios.post(`${graphBaseUrl}/${LIST_ID_ACCIONES}/items`, {
@@ -212,12 +265,10 @@ app.post('/api/save-acta', async (req, res) => {
       }
     }
 
-    return res.status(200).json({ success: true, message: '¡Acta procesada con éxito!' });
+    return res.status(200).json({ success: true });
 
   } catch (error) {
-    const apiErrorDetail = error.response?.data?.error || error.message;
-    console.error('Error inyectando en SharePoint:', JSON.stringify(apiErrorDetail));
-    return res.status(500).json({ success: false, message: 'Error en Microsoft Graph.', detail: apiErrorDetail });
+    return res.status(500).json({ success: false, detail: error.response?.data?.error || error.message });
   }
 });
 
