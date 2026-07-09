@@ -7,26 +7,20 @@ dotenv.config();
 
 const app = express();
 
-// Configuración de CORS permitiendo el acceso desde tu frontend de Vercel
 app.use(cors());
 app.use(express.json());
 
-// CONFIGURACIÓN SEGURO MEDIANTE LAS VARIABLES REALES DE TU PANTALLAZO VERCEL
 const TENANT_ID = process.env.TENANT_ID;
 const CLIENT_ID = process.env.CLIENT_ID;
 const CLIENT_SECRET = process.env.CLIENT_SECRET;
 const SITE_ID = process.env.SITE_ID;
 
-// MAPEO EXACTO CON LOS NOMBRES DE TU CAPTURA DE PANTALLA
 const LIST_ID_GENERAL = process.env.LIST_ID_GENERAL;
 const LIST_ID_ACCIONES = process.env.LIST_ID_ACCIONES;
 const LIST_ID_ASUNTOS = process.env.LIST_ID_ASUNTOS;
 const LIST_ID_SISTEMAS = process.env.LIST_ID_SISTEMAS;
 const LIST_ID_DIRECTORIO = process.env.LIST_ID_DIRECTORIO;
 
-// ==========================================
-// FUNCIÓN: ADQUISICIÓN AUTOMÁTICA DE TOKEN BEARER DESDE AZURE AD
-// ==========================================
 async function getMicrosoftGraphToken() {
   const url = `https://login.microsoftonline.com/${TENANT_ID}/oauth2/v2.0/token`;
   const params = new URLSearchParams();
@@ -46,39 +40,25 @@ async function getMicrosoftGraphToken() {
   }
 }
 
-// ==========================================
-// 1. RUTA DE PRUEBA: SALUDO INICIAL
-// ==========================================
 app.get('/', (req, res) => {
-  res.send('Servidor STC de la Agencia APP operando correctamente con variables de entorno validadas.');
+  res.send('Servidor STC de la Agencia APP operando correctamente con columnas de SharePoint homologadas.');
 });
 
-// ==========================================
-// 2. RUTA DE PRUEBA: STATUS GENERAL
-// ==========================================
 app.get('/api/status', (req, res) => {
-  res.json({ 
-    status: "online", 
-    message: "Conexión exitosa con el backend seguro de Vercel",
-    timestamp: new Date()
-  });
+  res.json({ status: "online", timestamp: new Date() });
 });
 
 // ==========================================
-// 3. RUTA: CONSULTAR SECOP II (SINCRO POR NIT DE LA AGENCIA APP)
+// 3. RUTA: CONSULTAR SECOP II 
 // ==========================================
 app.get('/api/buscar-secop', async (req, res) => {
   try {
     const { contrato } = req.query;
-
     if (!contrato) {
       return res.status(400).json({ success: false, message: "Falta el parámetro 'contrato' en la consulta" });
     }
 
-    // NIT oficial de la Agencia APP
     const nitAgenciaAPP = "900623766"; 
-    
-    // CORRECCIÓN KEY: Dataset oficial SECOP II (jbjy-vk9h) y parámetros correctos (referencia_del_contrato y nit_entidad)
     const secopUrl = `https://www.datos.gov.co/resource/jbjy-vk9h.json?referencia_del_contrato=${encodeURIComponent(contrato)}&nit_entidad=${nitAgenciaAPP}`;
     
     const response = await axios.get(secopUrl, {
@@ -95,118 +75,117 @@ app.get('/api/buscar-secop', async (req, res) => {
         cedula: contratoData.documento_proveedor || "No registrado",
         objeto: contratoData.objeto_del_contrato || "No registrado",
         nombreSupervisor: contratoData.nombre_supervisor || "No registrado",
-        cedulaSupervisor: contratoData.n_mero_de_documento_supervisor || "No registrado"
+        cedulaSupervisor: contratoData.n_mero_de_documento_supervisor || "No registrado",
+        fechaFirma: contratoData.fecha_de_firma || null // Captura para la columna de fecha inicio
       });
     } else {
       res.json({ success: false, message: "No se encontró ningún contrato con esa referencia asignado a la Agencia APP en SECOP II." });
     }
   } catch (error) {
-    console.error("Error detallado consultando SECOP II:", error.response?.data || error.message);
+    console.error("Error consultando SECOP II:", error.message);
     res.status(500).json({ success: false, message: "Error al conectarse con el servidor gubernamental." });
   }
 });
 
 // ==========================================
-// 4. RUTA: ENTRADA Y PERSISTENCIA COMPLETA EN SHAREPOINT
+// 4. RUTA: PERSISTENCIA COMPLETA EN SHAREPOINT (FINALIZAR Y ENVIAR)
 // ==========================================
 app.post('/api/save-acta', async (req, res) => {
   const { datosGenerales, acciones, asuntos, sistemas, directorio } = req.body;
 
-  if (!datosGenerales || !datosGenerales.cedula) {
-    return res.status(400).json({ success: false, message: 'Faltan los datos generales o la cédula de validación.' });
+  if (!datosGenerales || !datosGenerales.numeroContrato) {
+    return res.status(400).json({ success: false, message: 'Faltan los datos contractuales mínimos.' });
   }
 
   try {
     const token = await getMicrosoftGraphToken();
     const graphBaseUrl = `https://graph.microsoft.com/v1.0/sites/${SITE_ID}/lists`;
 
-    // 1. Inyección de Datos Generales (Pestaña 1)
+    // 1. Homologación: STC_General
     const generalPayload = {
       fields: {
-        Title: datosGenerales.cedula,
-        NombreContratista: datosGenerales.nombreContratista,
-        NumeroContrato: datosGenerales.numeroContrato,
+        Title: datosGenerales.numeroContrato, // Guarda número de contrato
         Supervisor: datosGenerales.supervisor,
-        ObjetoContrato: datosGenerales.objetoContrato,
-        CorreoContacto: datosGenerales.correoContratista,
+        Objetocontractual: datosGenerales.objetoContrato,
+        Fechadeiniciodelcontrato: datosGenerales.fechaInicio || '', 
         Dependencia: datosGenerales.dependencia,
-        LineamientosGenerales: datosGenerales.lineamientos || '',
-        RecomendacionesEspeciales: datosGenerales.recomendacionesAcciones || '',
-        EstadoActa: datosGenerales.isFinal ? 'Finalizado' : 'En Diligenciamiento'
+        Contratista: datosGenerales.nombreContratista,
+        Fechadediligenciamiento: datosGenerales.isFinal ? new Date().toISOString().split('T')[0] : '',
+        NIT_x002f_CC: datosGenerales.cedula,
+        Lineamientos: datosGenerales.lineamientos || '',
+        Recomendaciones: datosGenerales.recomendacionesAcciones || '',
+        CorreoContratista: datosGenerales.correoContratista,
+        Estado: datosGenerales.isFinal ? 'Finalizado' : 'En diligenciamiento'
       }
     };
     await axios.post(`${graphBaseUrl}/${LIST_ID_GENERAL}/items`, generalPayload, {
       headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
     });
 
-    // 2. Inyección Multirregistro: Acciones (Pestaña 2)
-    for (const item of acciones) {
-      await axios.post(`${graphBaseUrl}/${LIST_ID_ACCIONES}/items`, {
-        fields: {
-          Title: datosGenerales.cedula,
-          ProcesoClave: item.proceso,
-          Prioridad: item.prioridad,
-          ProductosEntrega: item.productos,
-          EvidenciasEjecucion: item.ejecucion,
-          FechaEjecucion: item.fecha,
-          RutaRepositorio: item.ruta,
-          Observaciones: item.obs
-        }
-      }, { headers: { 'Authorization': `Bearer ${token}` } });
+    // Solo si es el envío final guardamos los multirregistros hijos usando como llaves el número de contrato o cédula
+    if (datosGenerales.isFinal) {
+      // 2. Homologación: STC_Acciones
+      for (const item of acciones) {
+        await axios.post(`${graphBaseUrl}/${LIST_ID_ACCIONES}/items`, {
+          fields: {
+            Title: item.proceso,
+            Prioridad: item.prioridad,
+            Productosentrega: item.productos,
+            Acci_x00f3_nparalatransferenciad: item.accionConocimiento, // Nuevo campo inyectado
+            escribac_x00f3_mosellev_x00f3_a: item.ejecucion,
+            Fechaenqueseejecut_x00f3_laacci_: item.fecha,
+            Ruta_x0028_s_x0029_dondereposa_x: item.ruta,
+            Observaciones: item.obs
+          }
+        }, { headers: { 'Authorization': `Bearer ${token}` } });
+      }
+
+      // 3. Homologación: STC_Asuntos
+      for (const item of asuntos) {
+        await axios.post(`${graphBaseUrl}/${LIST_ID_ASUNTOS}/items`, {
+          fields: {
+            Title: item.tramite,
+            Estado: item.estado,
+            Entidad_x002f_Dependencia: item.entidad,
+            Accionespendientesporrealizar: item.accionesPendientes,
+            Fechal_x00ed_mite: item.fecha
+          }
+        }, { headers: { 'Authorization': `Bearer ${token}` } });
+      }
+
+      // 4. Homologación: STC_Sistemas
+      for (const item of sistemas) {
+        await axios.post(`${graphBaseUrl}/${LIST_ID_SISTEMAS}/items`, {
+          fields: {
+            Title: item.nombre,
+            Usuario: item.usuario,
+            Contrase_x00f1_a: item.contrasena,
+            Observaciones: item.obs
+          }
+        }, { headers: { 'Authorization': `Bearer ${token}` } });
+      }
+
+      // 5. Homologación: STC_Directorio
+      for (const item of directorio) {
+        await axios.post(`${graphBaseUrl}/${LIST_ID_DIRECTORIO}/items`, {
+          fields: {
+            Title: item.nombre,
+            Tel_x00e9_fono: item.tel,
+            E_x002d_Mail: item.correo,
+            Tipodecontacto: item.tipo,
+            Entidad_x002f_Dependencia: item.entidad,
+            Recomendaciones: item.reco
+          }
+        }, { headers: { 'Authorization': `Bearer ${token}` } });
+      }
     }
 
-    // 3. Inyección Multirregistro: Asuntos (Pestaña 3)
-    for (const item of asuntos) {
-      await axios.post(`${graphBaseUrl}/${LIST_ID_ASUNTOS}/items`, {
-        fields: {
-          Title: datosGenerales.cedula,
-          AsuntoTramite: item.tramite,
-          EstadoActual: item.estado,
-          EntidadDependencia: item.entidad,
-          AccionesPendientes: item.accionesPendientes,
-          FechaLimite: item.fecha
-        }
-      }, { headers: { 'Authorization': `Bearer ${token}` } });
-    }
-
-    // 4. Inyección Multirregistro: Sistemas (Pestaña 4)
-    for (const item of sistemas) {
-      await axios.post(`${graphBaseUrl}/${LIST_ID_SISTEMAS}/items`, {
-        fields: {
-          Title: datosGenerales.cedula,
-          SistemaAplicativo: item.nombre,
-          Usuario: item.usuario,
-          Contrasena: item.contrasena,
-          Observaciones: item.obs
-        }
-      }, { headers: { 'Authorization': `Bearer ${token}` } });
-    }
-
-    // 5. Inyección Multirregistro: Directorio (Pestaña 5)
-    for (const item of directorio) {
-      await axios.post(`${graphBaseUrl}/${LIST_ID_DIRECTORIO}/items`, {
-        fields: {
-          Title: datosGenerales.cedula,
-          NombreContacto: item.nombre,
-          Telefono: item.tel,
-          Email: item.correo,
-          TipoContacto: item.tipo,
-          EntidadDependenciaDirectorio: item.entidad,
-          RecomendacionesDirectorio: item.reco
-        }
-      }, { headers: { 'Authorization': `Bearer ${token}` } });
-    }
-
-    return res.status(200).json({ success: true, message: '¡Acta sincronizada con éxito en SharePoint!' });
+    return res.status(200).json({ success: true, message: '¡Acta procesada con éxito!' });
 
   } catch (error) {
     const apiErrorDetail = error.response?.data?.error || error.message;
-    console.error('Error detallado inyectando en SharePoint:', JSON.stringify(apiErrorDetail));
-    return res.status(500).json({ 
-      success: false, 
-      message: 'Error interno de comunicación con Microsoft Graph.',
-      detail: apiErrorDetail 
-    });
+    console.error('Error inyectando en SharePoint:', JSON.stringify(apiErrorDetail));
+    return res.status(500).json({ success: false, message: 'Error en Microsoft Graph.', detail: apiErrorDetail });
   }
 });
 
