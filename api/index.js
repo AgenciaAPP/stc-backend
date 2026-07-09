@@ -93,7 +93,10 @@ app.get('/api/buscar-secop', async (req, res) => {
         success: true,
         nombre: contratoData.proveedor_adjudicado || "No registrado",
         cedula: contratoData.documento_proveedor || "No registrado",
-        objeto: contratoData.objeto_del_contrato || "No registrado"
+        objeto: contratoData.objeto_del_contrato || "No registrado",
+        // ASIGNACIÓN CON LAS COLUMNAS EXACTAS QUE ME DISTE
+        nombreSupervisor: contratoData.nombre_supervisor || "No registrado",
+        cedulaSupervisor: contratoData.n_mero_de_documento_supervisor || "No registrado"
       });
     } else {
       res.json({ success: false, message: "No se encontró ningún contrato con esa referencia asignado a la Agencia APP en SECOP II." });
