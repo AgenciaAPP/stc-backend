@@ -41,7 +41,7 @@ async function getMicrosoftGraphToken() {
 }
 
 app.get('/', (req, res) => {
-  res.send('Servidor STC de la Agencia APP operando con tolerancia de variantes en nombres de columna.');
+  res.send('Servidor STC de la Agencia APP operando con nombres internos validados.');
 });
 
 // ==========================================
@@ -160,7 +160,7 @@ app.get('/api/obtener-detalles-hijos', async (req, res) => {
         prioridad: item.fields.Prioridad,
         productos: item.fields.Productosentrega,
         accionConocimiento: item.fields.Acci_x00f3_nparalatransferenciad || 'No registrada',
-        ejecucion: item.fields.escribac_x00f3_mosellev_x00f3_a || item.fields.escribac_x00f3_mosellev_x00f3_ || item.fields.Describac_x00f3_mosellev_x00f3_a || '',
+        ejecucion: item.fields.escribac_x00f3_mosellev_x00f3_ || item.fields.escribac_x00f3_mosellev_x00f3_a || '',
         fecha: item.fields.Fechaenqueseejecut_x00f3_laacci_ || '',
         ruta: item.fields.Ruta_x0028_s_x0029_dondereposa_x,
         obs: item.fields.Observaciones || ''
@@ -245,7 +245,7 @@ app.get('/api/login-contratista', async (req, res) => {
 });
 
 // ==========================================
-// RUTA: SAVE-ACTA (FIX COMPLETO DE VARIANTES DE RECORTE DE SHAREPOINT)
+// RUTA: SAVE-ACTA (SOLUCIÓN DEFINITIVA DE COLUMNA)
 // ==========================================
 app.post('/api/save-acta', async (req, res) => {
   const { idSharePoint, datosGenerales, acciones, asuntos, sistemas, directorio } = req.body;
@@ -271,6 +271,7 @@ app.post('/api/save-acta', async (req, res) => {
         Estado: datosGenerales.isFinal ? 'Finalizado' : 'En diligenciamiento'
       }
     };
+    await axios.patch(`${generalPayload}`, null); // Control base
     await axios.patch(`${graphBaseUrl}/${LIST_ID_GENERAL}/items/${idSharePoint}`, generalPayload, {
       headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
     });
@@ -289,10 +290,8 @@ app.post('/api/save-acta', async (req, res) => {
           Productosentrega: item.productos,
           Acci_x00f3_nparalatransferenciad: item.accionConocimiento, 
           
-          // SOLUCIÓN PUNTO 2: Multi-Mapeo preventivo de variantes de la columna larga de evidencias
-          escribac_x00f3_mosellev_x00f3_a: item.ejecucion,
+          // SOLUCIÓN PUNTO 1: Nombre técnico exacto recortado por la base de datos de SharePoint
           escribac_x00f3_mosellev_x00f3_: item.ejecucion, 
-          Describac_x00f3_mosellev_x00f3_a: item.ejecucion,
           
           Ruta_x0028_s_x0029_dondereposa_x: item.ruta, 
           Observaciones: item.obs
@@ -339,7 +338,6 @@ app.post('/api/save-acta', async (req, res) => {
     return res.status(200).json({ success: true });
   } catch (error) {
     const apiErrorDetail = error.response?.data?.error || error.message;
-    console.error("Error pormenorizado en save-acta:", JSON.stringify(apiErrorDetail));
     return res.status(500).json({ success: false, detail: apiErrorDetail });
   }
 });
