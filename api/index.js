@@ -40,19 +40,8 @@ async function getMicrosoftGraphToken() {
   }
 }
 
-// Función auxiliar para normalizar enlaces URL y evitar el rebote de SharePoint
-function normalizarUrlEvidencia(inputUrl) {
-  if (!inputUrl) return "https://agenciaapp.gov.co";
-  const textoLimpio = String(inputUrl).trim();
-  if (textoLimpio.startsWith('http://') || textoLimpio.startsWith('https://')) {
-    return textoLimpio;
-  }
-  // Si digitan texto plano (ej: "a" o "por definir"), lo envolvemos para que SharePoint lo valide como URL sin fallar
-  return `https://agenciaapp.gov.co?evidencia=${encodeURIComponent(textoLimpio)}`;
-}
-
 app.get('/', (req, res) => {
-  res.send('Servidor STC de la Agencia APP operando con sanitización de URLs.');
+  res.send('Servidor STC de la Agencia APP operando en vivo con la columna Describac_x00f3_mosellev_x00f3_a validada.');
 });
 
 // ==========================================
@@ -171,9 +160,9 @@ app.get('/api/obtener-detalles-hijos', async (req, res) => {
         prioridad: item.fields.Prioridad,
         productos: item.fields.Productosentrega,
         accionConocimiento: item.fields.Acci_x00f3_nparalatransferenciad || 'No registrada',
-        ejecucion: item.fields.escribac_x00f3_mosellev_x00f3_ || item.fields.escribac_x00f3_mosellev_x00f3_a || '',
+        ejecucion: item.fields.Describac_x00f3_mosellev_x00f3_a || item.fields.escribac_x00f3_mosellev_x00f3_a || '',
         fecha: item.fields.Fechaenqueseejecut_x00f3_laacci_ || '',
-        ruta: item.fields.Ruta_x0028_s_x0029_dondereposa_x,
+        ruta: item.fields.Ruta_x0028_s_x0029_dondereposa_x || '',
         obs: item.fields.Observaciones || ''
       }));
 
@@ -256,7 +245,7 @@ app.get('/api/login-contratista', async (req, res) => {
 });
 
 // ==========================================
-// RUTA: SAVE-ACTA (SANITISED AGENCIA APP)
+// RUTA: SAVE-ACTA (CORREGIDA CON DESCRIBAC...)
 // ==========================================
 app.post('/api/save-acta', async (req, res) => {
   const { idSharePoint, datosGenerales, acciones, asuntos, sistemas, directorio } = req.body;
@@ -283,7 +272,6 @@ app.post('/api/save-acta', async (req, res) => {
       }
     };
     
-    // Eliminado el axios.patch erróneo que causaba conflicto técnico de red
     await axios.patch(`${graphBaseUrl}/${LIST_ID_GENERAL}/items/${idSharePoint}`, generalPayload, {
       headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
     });
@@ -295,15 +283,15 @@ app.post('/api/save-acta', async (req, res) => {
 
     if (acciones && acciones.length > 0) {
       for (const item of acciones) {
+        // MAPEO QUIRÚRGICO FINAL: Apuntamos exactamente a la columna interna real confirmada
         const f = {
           Title: item.proceso, 
           CedulaRelacion: strCedula, 
           Prioridad: item.prioridad, 
           Productosentrega: item.productos,
           Acci_x00f3_nparalatransferenciad: item.accionConocimiento, 
-          escribac_x00f3_mosellev_x00f3_: item.ejecucion, 
-          // Sanitizamos la URL para que no cause rechazo de Graph si digitan texto libre plano
-          Ruta_x0028_s_x0029_dondereposa_x: normalizarUrlEvidencia(item.ruta), 
+          Describac_x00f3_mosellev_x00f3_a: item.ejecucion, // NOMBRE INSTITUCIONAL VERIFICADO
+          Ruta_x0028_s_x0029_dondereposa_x: String(item.ruta).trim(), // Texto plano
           Observaciones: item.obs
         };
         if (item.fecha && item.fecha.trim() !== "") f.Fechaenqueseejecut_x00f3_laacci_ = item.fecha;
