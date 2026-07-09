@@ -41,7 +41,7 @@ async function getMicrosoftGraphToken() {
 }
 
 app.get('/', (req, res) => {
-  res.send('Servidor STC de la Agencia APP operando en vivo con la columna Describac_x00f3_mosellev_x00f3_a validada.');
+  res.send('Servidor STC de la Agencia APP operando en vivo con limpieza estricta de formatos.');
 });
 
 // ==========================================
@@ -61,7 +61,7 @@ app.get('/api/buscar-secop', async (req, res) => {
       const contratoData = response.data[0];
       let fechaLimpia = contratoData.fecha_de_firma || null;
       if (fechaLimpia && fechaLimpia.includes('T')) {
-        fechaLimpia = fechaLimpia.split('T')[0];
+        fechaLinter = fechaLimpia.split('T')[0];
       }
       res.json({
         success: true,
@@ -141,7 +141,7 @@ app.get('/api/contratos', async (req, res) => {
 });
 
 // ==========================================
-// RUTA: OBTENER DETALLES HIJOS FILTRADOS POR CEDULARELACION
+// RUTA: OBTENER DETALLES HIJOS FILTRADOS POR CEDULARELACION (CON LIMPIEZA DE FECHAS)
 // ==========================================
 app.get('/api/obtener-detalles-hijos', async (req, res) => {
   const { cedula } = req.query;
@@ -155,27 +155,41 @@ app.get('/api/obtener-detalles-hijos', async (req, res) => {
     const resAcciones = await axios.get(`${graphBaseUrl}/${LIST_ID_ACCIONES}/items?expand=fields`, { headers: { 'Authorization': `Bearer ${token}` } });
     const acciones = resAcciones.data.value
       .filter(item => String(item.fields.CedulaRelacion).trim() === strCedula)
-      .map(item => ({
-        proceso: item.fields.Title,
-        prioridad: item.fields.Prioridad,
-        productos: item.fields.Productosentrega,
-        accionConocimiento: item.fields.Acci_x00f3_nparalatransferenciad || 'No registrada',
-        ejecucion: item.fields.Describac_x00f3_mosellev_x00f3_a || item.fields.escribac_x00f3_mosellev_x00f3_a || '',
-        fecha: item.fields.Fechaenqueseejecut_x00f3_laacci_ || '',
-        ruta: item.fields.Ruta_x0028_s_x0029_dondereposa_x || '',
-        obs: item.fields.Observaciones || ''
-      }));
+      .map(item => {
+        // SOLUCIÓN PUNTO 2: Limpieza de la cadena de fecha devuelta por SharePoint para omitir horas Z
+        let fechaLimpia = item.fields.Fechaenqueseejecut_x00f3_laacci_ || '';
+        if (fechaLimpia.includes('T')) {
+          fechaLimpia = fechaLimpia.split('T')[0];
+        }
+
+        return {
+          proceso: item.fields.Title,
+          prioridad: item.fields.Prioridad,
+          productos: item.fields.Productosentrega,
+          accionConocimiento: item.fields.Acci_x00f3_nparalatransferenciad || 'No registrada',
+          ejecucion: item.fields.Describac_x00f3_mosellev_x00f3_a || item.fields.escribac_x00f3_mosellev_x00f3_a || '',
+          fecha: fechaLimpia,
+          ruta: item.fields.Ruta_x0028_s_x0029_dondereposa_x || '',
+          obs: item.fields.Observaciones || ''
+        };
+      });
 
     const resAsuntos = await axios.get(`${graphBaseUrl}/${LIST_ID_ASUNTOS}/items?expand=fields`, { headers: { 'Authorization': `Bearer ${token}` } });
     const asuntos = resAsuntos.data.value
       .filter(item => String(item.fields.CedulaRelacion).trim() === strCedula)
-      .map(item => ({
-        tramite: item.fields.Title,
-        estado: item.fields.Estado,
-        entidad: item.fields.Entidad_x002f_Dependencia,
-        accionesPendientes: item.fields.Accionespendientesporrealizar,
-        fecha: item.fields.Fechal_x00ed_mite || ''
-      }));
+      .map(item => {
+        let fechaLimpiaAsu = item.fields.Fechal_x00ed_mite || '';
+        if (fechaLimpiaAsu.includes('T')) {
+          fechaLinterAsu = fechaLimpiaAsu.split('T')[0];
+        }
+        return {
+          tramite: item.fields.Title,
+          estado: item.fields.Estado,
+          entidad: item.fields.Entidad_x002f_Dependencia,
+          accionesPendientes: item.fields.Accionespendientesporrealizar,
+          fecha: fechaLimpiaAsu
+        };
+      });
 
     const resSistemas = await axios.get(`${graphBaseUrl}/${LIST_ID_SISTEMAS}/items?expand=fields`, { headers: { 'Authorization': `Bearer ${token}` } });
     const sistemas = resSistemas.data.value
@@ -245,7 +259,7 @@ app.get('/api/login-contratista', async (req, res) => {
 });
 
 // ==========================================
-// RUTA: SAVE-ACTA (CORREGIDA CON DESCRIBAC...)
+// RUTA: SAVE-ACTA
 // ==========================================
 app.post('/api/save-acta', async (req, res) => {
   const { idSharePoint, datosGenerales, acciones, asuntos, sistemas, directorio } = req.body;
@@ -283,15 +297,14 @@ app.post('/api/save-acta', async (req, res) => {
 
     if (acciones && acciones.length > 0) {
       for (const item of acciones) {
-        // MAPEO QUIRÚRGICO FINAL: Apuntamos exactamente a la columna interna real confirmada
         const f = {
           Title: item.proceso, 
           CedulaRelacion: strCedula, 
           Prioridad: item.prioridad, 
           Productosentrega: item.productos,
           Acci_x00f3_nparalatransferenciad: item.accionConocimiento, 
-          Describac_x00f3_mosellev_x00f3_a: item.ejecucion, // NOMBRE INSTITUCIONAL VERIFICADO
-          Ruta_x0028_s_x0029_dondereposa_x: String(item.ruta).trim(), // Texto plano
+          Describac_x00f3_mosellev_x00f3_a: item.ejecucion, 
+          Ruta_x0028_s_x0029_dondereposa_x: String(item.ruta).trim(), 
           Observaciones: item.obs
         };
         if (item.fecha && item.fecha.trim() !== "") f.Fechaenqueseejecut_x00f3_laacci_ = item.fecha;
@@ -336,7 +349,6 @@ app.post('/api/save-acta', async (req, res) => {
     return res.status(200).json({ success: true });
   } catch (error) {
     const apiErrorDetail = error.response?.data?.error || error.message;
-    console.error("Error pormenorizado en save-acta:", JSON.stringify(apiErrorDetail));
     return res.status(500).json({ success: false, detail: apiErrorDetail });
   }
 });
