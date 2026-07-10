@@ -137,7 +137,7 @@ app.get('/api/contratos', async (req, res) => {
         return itemCedulaSuper === strCedula;
       });
 
-      // CONTROL DE ACCESO ESTRICTO: Si el supervisor ingresó una cédula aleatoria que no tiene contratos, rebota la consulta
+      // CONTROL DE ACCESO ESTRICTO
       if (itemsFiltrados.length === 0) {
         return res.status(403).json({ 
           success: false, 
@@ -273,6 +273,21 @@ app.get('/api/login-contratista', async (req, res) => {
   } catch (error) {
     res.status(500).json({ success: false, detail: error.message });
   }
+});
+
+// ==========================================
+// NUEVA RUTA: REABRIR ACTA DESDE SUPERVISIÓN
+// ==========================================
+app.post('/api/reabrir-acta', async (req, res) => {
+  const { idSharePoint } = req.body;
+  if (!idSharePoint) return res.status(400).json({ success: false, message: 'Falta el ID del acta.' });
+  try {
+    const token = await getMicrosoftGraphToken();
+    const url = `https://graph.microsoft.com/v1.0/sites/${SITE_ID}/lists/${LIST_ID_GENERAL}/items/${idSharePoint}`;
+    const payload = { fields: { Estado: 'En diligenciamiento' } };
+    await axios.patch(url, payload, { headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' } });
+    return res.json({ success: true });
+  } catch (error) { return res.status(500).json({ success: false, detail: error.message }); }
 });
 
 // ==========================================
