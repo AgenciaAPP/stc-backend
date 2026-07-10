@@ -94,7 +94,7 @@ app.post('/api/habilitar-contrato', async (req, res) => {
     
     const habilitarPayload = {
       fields: {
-        Title: contrato, 
+        Title: contrato ? String(contrato).substring(0, 255) : '', 
         Supervisor: supervisor,
         CedulaSupervisor: String(cedulaSupervisor).trim(), // Nueva columna relacional de control
         Objetocontractual: objeto,
@@ -304,7 +304,7 @@ app.post('/api/save-acta', async (req, res) => {
 
     const generalPayload = {
       fields: {
-        Title: datosGenerales.numeroContrato,
+        Title: datosGenerales.numeroContrato ? String(datosGenerales.numeroContrato).substring(0, 255) : '',
         Supervisor: datosGenerales.supervisor,
         Objetocontractual: datosGenerales.objetoContrato,
         Dependencia: datosGenerales.dependencia, 
@@ -328,7 +328,18 @@ app.post('/api/save-acta', async (req, res) => {
     ));
     if (acciones && acciones.length > 0) {
       for (const item of acciones) {
-        const f = { Title: item.proceso, CedulaRelacion: strCedula, Prioridad: item.prioridad, Productosentrega: item.productos, Acci_x00f3_nparalatransferenciad: item.accionConocimiento, Describac_x00f3_mosellev_x00f3_a: item.ejecucion, Ruta_x0028_s_x0029_dondereposa_x: String(item.ruta).trim(), Observaciones: item.obs };
+        // BLINDAJE PREVENTIVO: Se recorta a un máximo de 255 caracteres el valor asignado a la columna Title (Proceso Clave)
+        // MAPEO AJUSTADO: Se asocia de manera correcta 'item.accionConocimiento' al campo oficial correspondido
+        const f = { 
+          Title: item.proceso ? String(item.proceso).substring(0, 255) : '', 
+          CedulaRelacion: strCedula, 
+          Prioridad: item.prioridad, 
+          Productosentrega: item.productos, 
+          Acci_x00f3_nparalatransferenciad: item.accionConocimiento || 'No registrada', 
+          Describac_x00f3_mosellev_x00f3_a: item.ejecucion, 
+          Ruta_x0028_s_x0029_dondereposa_x: String(item.ruta).trim(), 
+          Observaciones: item.obs 
+        };
         if (item.fecha && item.fecha.trim() !== "") f.Fechaenqueseejecut_x00f3_laacci_ = item.fecha;
         await axios.post(`${graphBaseUrl}/${LIST_ID_ACCIONES}/items`, { fields: f }, { headers: { 'Authorization': `Bearer ${token}` } });
       }
@@ -340,7 +351,8 @@ app.post('/api/save-acta', async (req, res) => {
     ));
     if (asuntos && asuntos.length > 0) {
       for (const item of asuntos) {
-        const f = { Title: item.tramite, CedulaRelacion: strCedula, Estado: item.estado, Entidad_x002f_Dependencia: item.entidad, Accionespendientesporrealizar: item.accionesPendientes };
+        // BLINDAJE PREVENTIVO: Se recorta a un máximo de 255 caracteres el valor asignado a la columna Title (Trámite)
+        const f = { Title: item.tramite ? String(item.tramite).substring(0, 255) : '', CedulaRelacion: strCedula, Estado: item.estado, Entidad_x002f_Dependencia: item.entidad, Accionespendientesporrealizar: item.accionesPendientes };
         if (item.fecha && item.fecha.trim() !== "") f.Fechal_x00ed_mite = item.fecha;
         await axios.post(`${graphBaseUrl}/${LIST_ID_ASUNTOS}/items`, { fields: f }, { headers: { 'Authorization': `Bearer ${token}` } });
       }
@@ -352,7 +364,8 @@ app.post('/api/save-acta', async (req, res) => {
     ));
     if (sistemas && sistemas.length > 0) {
       for (const item of sistemas) {
-        const f = { Title: item.nombre, CedulaRelacion: strCedula, Usuario: item.usuario, Contrase_x00f1_a: item.contrasena, Observaciones: item.obs };
+        // BLINDAJE PREVENTIVO: Se recorta a un máximo de 255 caracteres el valor asignado a la columna Title (Nombre Aplicativo)
+        const f = { Title: item.nombre ? String(item.nombre).substring(0, 255) : '', CedulaRelacion: strCedula, Usuario: item.usuario, Contrase_x00f1_a: item.contrasena, Observaciones: item.obs };
         await axios.post(`${graphBaseUrl}/${LIST_ID_SISTEMAS}/items`, { fields: f }, { headers: { 'Authorization': `Bearer ${token}` } });
       }
     }
@@ -363,7 +376,8 @@ app.post('/api/save-acta', async (req, res) => {
     ));
     if (directorio && directorio.length > 0) {
       for (const item of directorio) {
-        const f = { Title: item.nombre, CedulaRelacion: strCedula, Tel_x00e9_fono: item.tel, E_x002d_Mail: item.correo, Tipodecontacto: item.tipo, Entidad_x002f_Dependencia: item.entidad, Recomendaciones: item.reco };
+        // BLINDAJE PREVENTIVO: Se recorta a un máximo de 255 caracteres el valor asignado a la columna Title (Nombre Contacto)
+        const f = { Title: item.nombre ? String(item.nombre).substring(0, 255) : '', CedulaRelacion: strCedula, Tel_x00e9_fono: item.tel, E_x002d_Mail: item.correo, Tipodecontacto: item.tipo, Entidad_x002f_Dependencia: item.entidad, Recomendaciones: item.reco };
         await axios.post(`${graphBaseUrl}/${LIST_ID_DIRECTORIO}/items`, { fields: f }, { headers: { 'Authorization': `Bearer ${token}` } });
       }
     }
