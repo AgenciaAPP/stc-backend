@@ -114,22 +114,36 @@ app.post('/api/habilitar-contrato', async (req, res) => {
 });
 
 // ==========================================
-// RUTA: MONITOREO CON FILTRADO DE SEGURIDAD (CONTRATOS)
+// RUTA: MONITOREO CON FILTRADO DE SEGURIDAD STRICTO
 // ==========================================
 app.get('/api/contratos', async (req, res) => {
   const { queryCedula } = req.query; // Captura quién consulta desde el frontend
+  if (!queryCedula) {
+    return res.status(400).json({ success: false, message: "Identificación requerida para consultar." });
+  }
+
   try {
     const token = await getMicrosoftGraphToken();
     const url = `https://graph.microsoft.com/v1.0/sites/${SITE_ID}/lists/${LIST_ID_GENERAL}/items?expand=fields`;
     const response = await axios.get(url, { headers: { 'Authorization': `Bearer ${token}` } });
     
     let itemsFiltrados = response.data.value;
+    const strCedula = String(queryCedula).trim();
 
-    // Regla de Negocio: Si no es Talento Humano (123), filtra exclusivamente sus contratos asignados
-    if (queryCedula && queryCedula.trim() !== '123') {
-      itemsFiltrados = itemsFiltrados.filter(item => 
-        String(item.fields.CedulaSupervisor).trim() === String(queryCedula).trim()
-      );
+    // Regla de Negocio: Si no es Talento Humano (123), filtra exclusivamente por su columna relacional
+    if (strCedula !== '123') {
+      itemsFiltrados = itemsFiltrados.filter(item => {
+        const itemCedulaSuper = item.fields.CedulaSupervisor ? String(item.fields.CedulaSupervisor).trim() : '';
+        return itemCedulaSuper === strCedula;
+      });
+
+      // CONTROL DE ACCESO ESTRICTO: Si el supervisor ingresó una cédula aleatoria que no tiene contratos, rebota la consulta
+      if (itemsFiltrados.length === 0) {
+        return res.status(403).json({ 
+          success: false, 
+          message: "Acceso denegado. No figuras como supervisor activo de ningún contrato habilitado." 
+        });
+      }
     }
     
     const listaFormateada = itemsFiltrados.map(item => ({
