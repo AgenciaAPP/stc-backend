@@ -69,7 +69,7 @@ async function enviarCorreoBienvenidaPIN(token, emailDestino, contratista, contr
             <p style="font-size: 14px; line-height: 1.6;">Te informamos que has sido habilitado por parte de la <strong>Dirección Administrativa y Financiera</strong> en la plataforma institucional de la <strong>Agencia APP</strong> para registrar y estructurar tu Acta de Transferencia de Conocimiento.</p>
             
             <div style="background-color: #f8f9fa; border-left: 4px solid #ffc107; padding: 12px; margin: 18px 0; border-radius: 4px;">
-              <p style="margin: 4px 0; font-size: 14px;"><strong>Contrato Referencia:</strong> ${contrato}</p>
+              <p style="margin: 4px 0; font-size: 14px;"><strong>Contrato Referencia:</strong> ${contracto}</p>
             </div>
 
             <p style="font-size: 14px; line-height: 1.6;">Para garantizar la custodia, confidencialidad y reserva de tus accesos y entregables, se ha generado de forma automática un <strong>PIN Corto de Seguridad</strong> para tu cuenta:</p>
@@ -324,7 +324,7 @@ app.get('/api/obtener-detalles-hijos', async (req, res) => {
 });
 
 // ==========================================
-// RUTA: LOGIN CONTRATISTA CON FILTRADO Y VALIDACIÓN DOUBLE FACTOR POR PIN
+// RUTA: LOGIN CONTRATISTA
 // ==========================================
 app.get('/api/login-contratista', async (req, res) => {
   const { cedula, pin } = req.query;
@@ -477,6 +477,56 @@ app.post('/api/save-acta', async (req, res) => {
   } catch (error) {
     const apiErrorDetail = error.response?.data?.error || error.message;
     return res.status(500).json({ success: false, detail: apiErrorDetail });
+  }
+});
+
+// ==========================================
+// RUTA TEMPORAL: MIGRAR Y NOTIFICAR CONTRATISTAS SIN PIN ASIGNADO
+// ==========================================
+app.post('/api/migrar-pines-pendientes', async (req, res) => {
+  try {
+    const token = await getMicrosoftGraphToken();
+    const graphBaseUrl = `https://graph.microsoft.com/v1.0/sites/${SITE_ID}/lists/${LIST_ID_GENERAL}/items?expand=fields`;
+    
+    // 1. Traer todos los contratos de SharePoint
+    const response = await axios.get(graphBaseUrl, { headers: { 'Authorization': `Bearer ${token}` } });
+    const items = response.data.value;
+
+    // 2. Filtrar solo los registros que NO tengan un PIN asignado
+    const pendientes = items.filter(item => !item.fields.PIN_Contratista);
+
+    if (pendientes.length === 0) {
+      return res.json({ success: true, message: "Todos los contratistas ya cuentan con un PIN de seguridad asignado." });
+    }
+
+    let logsMigracion = [];
+
+    // 3. Iterar y actualizar a cada persona de forma controlada
+    for (const item of pendientes) {
+      const idItem = item.id;
+      const contratista = item.fields.Contratista || "Contratista Registrado";
+      const contratoRef = item.fields.Title || "PS-PENDIENTE";
+      const correoDestino = item.fields.CorreoContratista ? String(item.fields.CorreoContratista).trim() : 'correo.pendiente@agenciaapp.co';
+      
+      // Generar el PIN dinámico de 4 dígitos
+      const nuevoPin = String(Math.floor(1000 + Math.random() * 9000));
+
+      // Actualizar la fila en SharePoint con su nuevo PIN
+      const patchUrl = `https://graph.microsoft.com/v1.0/sites/${SITE_ID}/lists/${LIST_ID_GENERAL}/items/${idItem}`;
+      const payload = { fields: { PIN_Contratista: nuevoPin } };
+      
+      await axios.patch(patchUrl, payload, { headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' } });
+
+      // Disparar la notificación oficial con la redacción formal y el nuevo link
+      await enviarCorreoBienvenidaPIN(token, correoDestino, contratista, contratoRef, nuevoPin);
+
+      logsMigracion.push({ contratista, contratoRef, correoDestino, pinAsignado: nuevoPin });
+    }
+
+    return res.json({ success: true, totalMigrados: logsMigracion.length, detalles: logsMigracion });
+
+  } catch (error) {
+    return res.status(500).json({ success: false, message: "Error ejecutando el proceso de migración", detail: error.message });
   }
 });
 
