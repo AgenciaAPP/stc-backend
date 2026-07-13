@@ -49,23 +49,24 @@ function calcularPinSupervisor(cedula) {
   return `${primerosDos}${ultimosDos}`;
 }
 
-// FUNCIÓN AUXILIAR: DISPARAR CORREO DE BIENVENIDA CON EL PIN ASIGNADO VIA MICROSOFT GRAPH
+// =========================================================================
+// FUNCIÓN AUXILIAR: DISPARAR CORREO DE BIENVENIDA CON LA NUEVA REDACCIÓN
+// =========================================================================
 async function enviarCorreoBienvenidaPIN(token, emailDestino, contratista, contrato, pinGenerado) {
-  // AJUSTADO SINO: Apunta directamente al buzón verificado de Lina Martínez Giraldo en Azure
+  // Apunta directamente al buzón verificado de Lina Martínez Giraldo en Azure
   const url = 'https://graph.microsoft.com/v1.0/users/lina.martinez@app.gov.co/sendMail'; 
   const mailPayload = {
     message: {
-      subject: "🔒 Activación de Acceso - Sistema de Transferencia de Conocimiento (STC)",
+      subject: "🔒 Activación de Acceso - Sistema de Transferencia de Conocimiento",
       body: {
         contentType: "HTML",
         content: `
           <div style="font-family: 'Segoe UI', Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 8px; padding: 24px;">
-            <h2 style="color: #0056b3; border-bottom: 2px solid #0056b3; padding-bottom: 10px;">¡Hola, ${contratista.toUpperCase()}!</h2>
-            <p style="font-size: 14px; line-height: 1.6;">Te informamos que has sido habilitado formalmente por el departamento de <strong>Talento Humano</strong> en la plataforma institucional de la <strong>Agencia APP</strong> para registrar y estructurar tu Acta de Transferencia de Conocimiento.</p>
+            <h2 style="color: #0056b3; border-bottom: 2px solid #0056b3; padding-bottom: 10px; margin-top: 0;">¡Hola, ${contratista.toUpperCase()}!</h2>
+            <p style="font-size: 14px; line-height: 1.6;">Te informamos que has sido habilitado por parte de la <strong>Dirección Administrativa y Financiera</strong> en la plataforma institucional de la <strong>Agencia APP</strong> para registrar y estructurar tu Acta de Transferencia de Conocimiento.</p>
             
             <div style="background-color: #f8f9fa; border-left: 4px solid #ffc107; padding: 12px; margin: 18px 0; border-radius: 4px;">
               <p style="margin: 4px 0; font-size: 14px;"><strong>Contrato Referencia:</strong> ${contrato}</p>
-              <p style="margin: 4px 0; font-size: 14px;"><strong>Perfil Asignado:</strong> Contratista Activo</p>
             </div>
 
             <p style="font-size: 14px; line-height: 1.6;">Para garantizar la custodia, confidencialidad y reserva de tus accesos y entregables, se ha generado de forma automática un <strong>PIN Corto de Seguridad</strong> para tu cuenta:</p>
@@ -78,7 +79,7 @@ async function enviarCorreoBienvenidaPIN(token, emailDestino, contratista, contr
 
             <p style="font-size: 13px; color: #475569; line-height: 1.5;">💡 <em>Nota: Para ingresar a la plataforma, digita tu número de cédula tradicional acompañado de este código de 4 dígitos. No compartas este PIN con nadie.</em></p>
             <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 24px 0;">
-            <p style="font-size: 11px; color: #94a3b8; text-align: center; margin: 0;">Sistema de Transferencia de Conocimiento (STC) • Subdirección Administrativa y Financiera • Agencia APP</p>
+            <p style="font-size: 11px; color: #94a3b8; text-align: center; margin: 0;">Transferencia de Conocimiento • Dirección Administrativa y Financiera • Agencia APP</p>
           </div>
         `
       },
