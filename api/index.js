@@ -49,12 +49,15 @@ function calcularPinSupervisor(cedula) {
   return `${primerosDos}${ultimosDos}`;
 }
 
-// =========================================================================
-// FUNCIÓN AUXILIAR: DISPARAR CORREO DE BIENVENIDA CON LA NUEVA REDACCIÓN
-// =========================================================================
+// ====================================================================================
+// FUNCIÓN AUXILIAR: DISPARAR CORREO DE BIENVENIDA CON EL PIN ASIGNADO Y LINK DE INGRESO
+// ====================================================================================
 async function enviarCorreoBienvenidaPIN(token, emailDestino, contratista, contrato, pinGenerado) {
-  // Apunta directamente al buzón verificado de Lina Martínez Giraldo en Azure
   const url = 'https://graph.microsoft.com/v1.0/users/lina.martinez@app.gov.co/sendMail'; 
+  
+  // URL de la plataforma para el redireccionamiento directo del contratista
+  const urlPlataforma = 'https://stc-app.vercel.app'; 
+
   const mailPayload = {
     message: {
       subject: "🔒 Activación de Acceso - Sistema de Transferencia de Conocimiento",
@@ -71,10 +74,17 @@ async function enviarCorreoBienvenidaPIN(token, emailDestino, contratista, contr
 
             <p style="font-size: 14px; line-height: 1.6;">Para garantizar la custodia, confidencialidad y reserva de tus accesos y entregables, se ha generado de forma automática un <strong>PIN Corto de Seguridad</strong> para tu cuenta:</p>
             
-            <div style="text-align: center; margin: 24px 0;">
+            <div style="text-align: center; margin: 20px 0;">
               <div style="display: inline-block; background-color: #e2e8f0; color: #0f172a; font-size: 24px; font-weight: bold; letter-spacing: 6px; padding: 12px 32px; border-radius: 6px; border: 1px dashed #94a3b8;">
                 ${pinGenerado}
               </div>
+            </div>
+
+            <!-- BOTÓN INTERACTIVO ADICIONADO: Redirección directa a la plataforma -->
+            <div style="text-align: center; margin: 28px 0;">
+              <a href="${urlPlataforma}" target="_blank" style="background-color: #0056b3; color: #ffffff; font-size: 14px; font-weight: bold; text-decoration: none; padding: 12px 28px; border-radius: 6px; display: inline-block; box-shadow: 0 4px 6px rgba(0,86,179,0.15);">
+                🚀 Ingresar a la Plataforma STC
+              </a>
             </div>
 
             <p style="font-size: 13px; color: #475569; line-height: 1.5;">💡 <em>Nota: Para ingresar a la plataforma, digita tu número de cédula tradicional acompañado de este código de 4 dígitos. No compartas este PIN con nadie.</em></p>
@@ -458,7 +468,7 @@ app.post('/api/save-acta', async (req, res) => {
     ));
     if (directorio && directorio.length > 0) {
       for (const item of directorio) {
-        const f = { Title: item.nombre ? String(item.nombre).substring(0, 255) : '', CedulaRelacion: strCedula, Tel_x00e9_fono: item.tel, E_x002d_Mail: item.correo, Tipodecontacto: item.tipo, Entidad_x002f_Dependencia: item.entidad, Recomendaciones: item.reco };
+        const f = { Title: item.nombre ? String(item.nombre).substring(0, 255) : '', CedulaRelacion: strCedula, Tel_x00e9_fono: item.tel, E_x002d_Mail: item.correo, Tipodecontacto: item.tipo, Entidad_x002f_Dependencia: item.entidad, Recommendations: item.reco };
         await axios.post(`${graphBaseUrl}/${LIST_ID_DIRECTORIO}/items`, { fields: f }, { headers: { 'Authorization': `Bearer ${token}` } });
       }
     }
