@@ -56,7 +56,7 @@ async function enviarCorreoBienvenidaPIN(token, emailDestino, contratista, contr
   const url = 'https://graph.microsoft.com/v1.0/users/lina.martinez@app.gov.co/sendMail'; 
   
   // URL de la plataforma para el redireccionamiento directo del contratista
-  const urlPlataforma = 'https://stc-app.vercel.app'; 
+  const urlPlataforma = 'https://stc-frontend-pi.vercel.app/'; 
 
   const mailPayload = {
     message: {
