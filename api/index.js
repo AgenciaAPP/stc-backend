@@ -40,8 +40,64 @@ async function getMicrosoftGraphToken() {
   }
 }
 
+// FUNCIÓN AUXILIAR: CALCULAR PIN DE SUPERVISOR (2 PRIMEROS Y 2 ÚLTIMOS DÍGITOS)
+function calcularPinSupervisor(cedula) {
+  const str = String(cedula).trim();
+  if (str.length < 4) return "0000"; 
+  const primerosDos = str.substring(0, 2);
+  const ultimosDos = str.substring(str.length - 2);
+  return `${primerosDos}${ultimosDos}`;
+}
+
+// FUNCIÓN AUXILIAR: DISPARAR CORREO DE BIENVENIDA CON EL PIN ASIGNADO VIA MICROSOFT GRAPH
+async function enviarCorreoBienvenidaPIN(token, emailDestino, contratista, contrato, pinGenerado) {
+  // AJUSTADO SINO: Apunta directamente al buzón verificado de Lina Martínez Giraldo en Azure
+  const url = 'https://graph.microsoft.com/v1.0/users/lina.martinez@app.gov.co/sendMail'; 
+  const mailPayload = {
+    message: {
+      subject: "🔒 Activación de Acceso - Sistema de Transferencia de Conocimiento (STC)",
+      body: {
+        contentType: "HTML",
+        content: `
+          <div style="font-family: 'Segoe UI', Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 8px; padding: 24px;">
+            <h2 style="color: #0056b3; border-bottom: 2px solid #0056b3; padding-bottom: 10px;">¡Hola, ${contratista.toUpperCase()}!</h2>
+            <p style="font-size: 14px; line-height: 1.6;">Te informamos que has sido habilitado formalmente por el departamento de <strong>Talento Humano</strong> en la plataforma institucional de la <strong>Agencia APP</strong> para registrar y estructurar tu Acta de Transferencia de Conocimiento.</p>
+            
+            <div style="background-color: #f8f9fa; border-left: 4px solid #ffc107; padding: 12px; margin: 18px 0; border-radius: 4px;">
+              <p style="margin: 4px 0; font-size: 14px;"><strong>Contrato Referencia:</strong> ${contrato}</p>
+              <p style="margin: 4px 0; font-size: 14px;"><strong>Perfil Asignado:</strong> Contratista Activo</p>
+            </div>
+
+            <p style="font-size: 14px; line-height: 1.6;">Para garantizar la custodia, confidencialidad y reserva de tus accesos y entregables, se ha generado de forma automática un <strong>PIN Corto de Seguridad</strong> para tu cuenta:</p>
+            
+            <div style="text-align: center; margin: 24px 0;">
+              <div style="display: inline-block; background-color: #e2e8f0; color: #0f172a; font-size: 24px; font-weight: bold; letter-spacing: 6px; padding: 12px 32px; border-radius: 6px; border: 1px dashed #94a3b8;">
+                ${pinGenerado}
+              </div>
+            </div>
+
+            <p style="font-size: 13px; color: #475569; line-height: 1.5;">💡 <em>Nota: Para ingresar a la plataforma, digita tu número de cédula tradicional acompañado de este código de 4 dígitos. No compartas este PIN con nadie.</em></p>
+            <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 24px 0;">
+            <p style="font-size: 11px; color: #94a3b8; text-align: center; margin: 0;">Sistema de Transferencia de Conocimiento (STC) • Subdirección Administrativa y Financiera • Agencia APP</p>
+          </div>
+        `
+      },
+      toRecipients: [
+        { emailAddress: { address: emailDestino } }
+      ]
+    }
+  };
+
+  try {
+    await axios.post(url, mailPayload, { headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' } });
+    console.log(`Correo de notificación STC enviado con éxito a: ${emailDestino}`);
+  } catch (err) {
+    console.error('Error enviando correo de notificación desde Graph API:', err.response?.data || err.message);
+  }
+}
+
 app.get('/', (req, res) => {
-  res.send('Servidor STC operando con filtrado dinámico de supervisores y cédula maestra 123.');
+  res.send('Servidor STC operando con filtrado dinámico de supervisores y doble factor por PIN de 4 dígitos desde el buzón institucional.');
 });
 
 // ==========================================
@@ -81,10 +137,10 @@ app.get('/api/buscar-secop', async (req, res) => {
 });
 
 // ==========================================
-// RUTA: HABILITAR CONTRATO (INYECTA LA CÉDULA DEL SUPERVISOR)
+// RUTA: HABILITAR CONTRATO (GENERACIÓN DINÁMICA DE PIN Y DISPARO DE CORREO AUTOMÁTICO)
 // ==========================================
 app.post('/api/habilitar-contrato', async (req, res) => {
-  const { contrato, contratista, cedula, objeto, supervisor, cedulaSupervisor, fechaInicio } = req.body;
+  const { contrato, contratista, cedula, objeto, supervisor, cedulaSupervisor, fechaInicio, correoNotificacion } = req.body;
   if (!contrato || !cedula) {
     return res.status(400).json({ success: false, message: 'Faltan datos obligatorios.' });
   }
@@ -92,21 +148,30 @@ app.post('/api/habilitar-contrato', async (req, res) => {
     const token = await getMicrosoftGraphToken();
     const graphBaseUrl = `https://graph.microsoft.com/v1.0/sites/${SITE_ID}/lists`;
     
+    const pinAleatorio = String(Math.floor(1000 + Math.random() * 9000));
+    const destinoMail = correoNotificacion ? String(correoNotificacion).trim() : 'correo.pendiente@agenciaapp.co';
+
     const habilitarPayload = {
       fields: {
         Title: contrato ? String(contrato).substring(0, 255) : '', 
         Supervisor: supervisor,
-        CedulaSupervisor: String(cedulaSupervisor).trim(), // Nueva columna relacional de control
+        CedulaSupervisor: String(cedulaSupervisor).trim(), 
         Objetocontractual: objeto,
         Fechadeiniciodelcontrato: fechaInicio || '',
         Contratista: contratista,
         NIT_x002f_CC: String(cedula).trim(),
-        Estado: 'Sin diligenciar'
+        Estado: 'Sin diligenciar',
+        PIN_Contratista: pinAleatorio, 
+        CorreoContratista: destinoMail
       }
     };
+
     await axios.post(`${graphBaseUrl}/${LIST_ID_GENERAL}/items`, habilitarPayload, {
       headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
     });
+
+    await enviarCorreoBienvenidaPIN(token, destinoMail, contratista, contrato, pinAleatorio);
+
     return res.status(200).json({ success: true });
   } catch (error) {
     return res.status(500).json({ success: false, detail: error.response?.data?.error || error.message });
@@ -114,12 +179,26 @@ app.post('/api/habilitar-contrato', async (req, res) => {
 });
 
 // ==========================================
-// RUTA: MONITOREO CON FILTRADO DE SEGURIDAD STRICTO
+// RUTA: MONITOREO CON VALIDACIÓN EXCLUSIVA DE PIN PARA FUNCIONARIOS (REGLA ALGORÍTMICA 2-2)
 // ==========================================
 app.get('/api/contratos', async (req, res) => {
-  const { queryCedula } = req.query; // Captura quién consulta desde el frontend
-  if (!queryCedula) {
-    return res.status(400).json({ success: false, message: "Identificación requerida para consultar." });
+  const { queryCedula, queryPin } = req.query; 
+  if (!queryCedula || !queryPin) {
+    return res.status(400).json({ success: false, message: "Identificación y PIN de seguridad requeridos." });
+  }
+
+  const strCedula = String(queryCedula).trim();
+  const strPin = String(queryPin).trim();
+
+  if (strCedula !== '123') {
+    const pinCalculado = calcularPinSupervisor(strCedula);
+    if (strPin !== pinCalculado) {
+      return res.status(401).json({ success: false, message: "PIN de seguridad inválido para este perfil de supervisión." });
+    }
+  } else {
+    if (strPin !== '2026') {
+      return res.status(401).json({ success: false, message: "Contraseña de superusuario incorrecta." });
+    }
   }
 
   try {
@@ -128,16 +207,13 @@ app.get('/api/contratos', async (req, res) => {
     const response = await axios.get(url, { headers: { 'Authorization': `Bearer ${token}` } });
     
     let itemsFiltrados = response.data.value;
-    const strCedula = String(queryCedula).trim();
 
-    // Regla de Negocio: Si no es Talento Humano (123), filtra exclusivamente por su columna relacional
     if (strCedula !== '123') {
       itemsFiltrados = itemsFiltrados.filter(item => {
         const itemCedulaSuper = item.fields.CedulaSupervisor ? String(item.fields.CedulaSupervisor).trim() : '';
         return itemCedulaSuper === strCedula;
       });
 
-      // CONTROL DE ACCESO ESTRICTO
       if (itemsFiltrados.length === 0) {
         return res.status(403).json({ 
           success: false, 
@@ -237,10 +313,13 @@ app.get('/api/obtener-detalles-hijos', async (req, res) => {
 });
 
 // ==========================================
-// RUTA: LOGIN CONTRATISTA
+// RUTA: LOGIN CONTRATISTA CON FILTRADO Y VALIDACIÓN DOUBLE FACTOR POR PIN
 // ==========================================
 app.get('/api/login-contratista', async (req, res) => {
-  const { cedula } = req.query;
+  const { cedula, pin } = req.query;
+  if (!cedula || !pin) {
+    return res.status(400).json({ success: false, message: "Faltan credenciales obligatorias para autenticar." });
+  }
   try {
     const token = await getMicrosoftGraphToken();
     const url = `https://graph.microsoft.com/v1.0/sites/${SITE_ID}/lists/${LIST_ID_GENERAL}/items?expand=fields`;
@@ -252,6 +331,12 @@ app.get('/api/login-contratista', async (req, res) => {
     });
     
     if (match) {
+      const dbPin = match.fields.PIN_Contratista ? String(match.fields.PIN_Contratista).trim() : '';
+      
+      if (dbPin !== String(pin).trim()) {
+        return res.status(401).json({ success: false, incorrectPin: true, message: "PIN de seguridad incorrecto. Verifique su correo institucional." });
+      }
+
       res.json({
         success: true,
         exists: true,
@@ -276,7 +361,7 @@ app.get('/api/login-contratista', async (req, res) => {
 });
 
 // ==========================================
-// NUEVA RUTA: REABRIR ACTA DESDE SUPERVISIÓN
+// RUTA: REABRIR ACTA DESDE SUPERVISIÓN
 // ==========================================
 app.post('/api/reabrir-acta', async (req, res) => {
   const { idSharePoint } = req.body;
@@ -328,8 +413,6 @@ app.post('/api/save-acta', async (req, res) => {
     ));
     if (acciones && acciones.length > 0) {
       for (const item of acciones) {
-        // BLINDAJE PREVENTIVO: Se recorta a un máximo de 255 caracteres el valor asignado a la columna Title (Proceso Clave)
-        // MAPEO AJUSTADO: Se asocia de manera correcta 'item.accionConocimiento' al campo oficial correspondido
         const f = { 
           Title: item.proceso ? String(item.proceso).substring(0, 255) : '', 
           CedulaRelacion: strCedula, 
@@ -351,7 +434,6 @@ app.post('/api/save-acta', async (req, res) => {
     ));
     if (asuntos && asuntos.length > 0) {
       for (const item of asuntos) {
-        // BLINDAJE PREVENTIVO: Se recorta a un máximo de 255 caracteres el valor asignado a la columna Title (Trámite)
         const f = { Title: item.tramite ? String(item.tramite).substring(0, 255) : '', CedulaRelacion: strCedula, Estado: item.estado, Entidad_x002f_Dependencia: item.entidad, Accionespendientesporrealizar: item.accionesPendientes };
         if (item.fecha && item.fecha.trim() !== "") f.Fechal_x00ed_mite = item.fecha;
         await axios.post(`${graphBaseUrl}/${LIST_ID_ASUNTOS}/items`, { fields: f }, { headers: { 'Authorization': `Bearer ${token}` } });
@@ -364,7 +446,6 @@ app.post('/api/save-acta', async (req, res) => {
     ));
     if (sistemas && sistemas.length > 0) {
       for (const item of sistemas) {
-        // BLINDAJE PREVENTIVO: Se recorta a un máximo de 255 caracteres el valor asignado a la columna Title (Nombre Aplicativo)
         const f = { Title: item.nombre ? String(item.nombre).substring(0, 255) : '', CedulaRelacion: strCedula, Usuario: item.usuario, Contrase_x00f1_a: item.contrasena, Observaciones: item.obs };
         await axios.post(`${graphBaseUrl}/${LIST_ID_SISTEMAS}/items`, { fields: f }, { headers: { 'Authorization': `Bearer ${token}` } });
       }
@@ -376,7 +457,6 @@ app.post('/api/save-acta', async (req, res) => {
     ));
     if (directorio && directorio.length > 0) {
       for (const item of directorio) {
-        // BLINDAJE PREVENTIVO: Se recorta a un máximo de 255 caracteres el valor asignado a la columna Title (Nombre Contacto)
         const f = { Title: item.nombre ? String(item.nombre).substring(0, 255) : '', CedulaRelacion: strCedula, Tel_x00e9_fono: item.tel, E_x002d_Mail: item.correo, Tipodecontacto: item.tipo, Entidad_x002f_Dependencia: item.entidad, Recomendaciones: item.reco };
         await axios.post(`${graphBaseUrl}/${LIST_ID_DIRECTORIO}/items`, { fields: f }, { headers: { 'Authorization': `Bearer ${token}` } });
       }
