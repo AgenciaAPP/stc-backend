@@ -69,7 +69,7 @@ async function enviarCorreoBienvenidaPIN(token, emailDestino, contratista, contr
             <p style="font-size: 14px; line-height: 1.6;">Te informamos que has sido habilitado por parte de la <strong>Dirección Administrativa y Financiera</strong> en la plataforma institucional de la <strong>Agencia APP</strong> para registrar y estructurar tu Acta de Transferencia de Conocimiento.</p>
             
             <div style="background-color: #f8f9fa; border-left: 4px solid #ffc107; padding: 12px; margin: 18px 0; border-radius: 4px;">
-              <p style="margin: 4px 0; font-size: 14px;"><strong>Contrato Referencia:</strong> ${contracto}</p>
+              <p style="margin: 4px 0; font-size: 14px;"><strong>Contrato Referencia:</strong> ${contrato}</p>
             </div>
 
             <p style="font-size: 14px; line-height: 1.6;">Para garantizar la custodia, confidencialidad y reserva de tus accesos y entregables, se ha generado de forma automática un <strong>PIN Corto de Seguridad</strong> para tu cuenta:</p>
@@ -480,10 +480,10 @@ app.post('/api/save-acta', async (req, res) => {
   }
 });
 
-// ==========================================
-// RUTA TEMPORAL: MIGRAR Y NOTIFICAR CONTRATISTAS SIN PIN ASIGNADO
-// ==========================================
-app.post('/api/migrar-pines-pendientes', async (req, res) => {
+// =========================================================================
+// RUTA TEMPORAL MIGRADA A GET PARA EJECUCIÓN DIRECTA DESDE EL NAVEGADOR
+// =========================================================================
+app.get('/api/migrar-pines-pendientes', async (req, res) => {
   try {
     const token = await getMicrosoftGraphToken();
     const graphBaseUrl = `https://graph.microsoft.com/v1.0/sites/${SITE_ID}/lists/${LIST_ID_GENERAL}/items?expand=fields`;
