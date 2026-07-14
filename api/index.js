@@ -155,7 +155,13 @@ async function enviarCorreoActaPendienteRevision(token, correoSupervisor, nombre
                 🔍 Revisar Acta en la Plataforma
               </a>
             </div>
-            <p style="font-size: 13px; color: #475569; line-height: 1.5;">Ingresa con tu cédula y PIN de supervisor, ubica el contrato en tu panel de monitoreo, y podrás aprobarla o rechazarla con un motivo.</p>
+            <div style="background-color: #f8f9fa; border-left: 4px solid #0056b3; padding: 14px 16px; margin: 18px 0; border-radius: 4px;">
+              <p style="margin: 0 0 8px 0; font-size: 13px; font-weight: bold; color: #0056b3;">¿Cómo ingresar?</p>
+              <p style="margin: 4px 0; font-size: 13px; color: #333; line-height: 1.6;">1. En la plataforma, haz clic en el botón <strong>"Soy Funcionario"</strong> (a la derecha).</p>
+              <p style="margin: 4px 0; font-size: 13px; color: #333; line-height: 1.6;">2. <strong>Usuario:</strong> tu número de cédula.</p>
+              <p style="margin: 4px 0; font-size: 13px; color: #333; line-height: 1.6;">3. <strong>Contraseña (PIN):</strong> los 2 primeros dígitos y los 2 últimos dígitos de tu cédula, seguidos (4 dígitos en total).</p>
+            </div>
+            <p style="font-size: 13px; color: #475569; line-height: 1.5;">Una vez dentro, ubica el contrato en tu panel de monitoreo y podrás aprobarla o rechazarla con un motivo.</p>
             <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 24px 0;">
             <p style="font-size: 11px; color: #94a3b8; text-align: center; margin: 0;">Transferencia de Conocimiento • Dirección Administrativa y Financiera • Agencia APP</p>
           </div>
