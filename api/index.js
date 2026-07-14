@@ -21,6 +21,25 @@ const LIST_ID_ASUNTOS = process.env.LIST_ID_ASUNTOS;
 const LIST_ID_SISTEMAS = process.env.LIST_ID_SISTEMAS;
 const LIST_ID_DIRECTORIO = process.env.LIST_ID_DIRECTORIO;
 
+// ====================================================================================
+// MAPA FIJO DE CORREOS DE SUPERVISORES (CÉDULA -> CORREO)
+// Reemplaza este objeto con la lista real. Formato: 'cedula': 'correo@agenciaapp.gov.co'
+// ====================================================================================
+const CORREOS_SUPERVISORES = {
+  '70879917': 'direcciongeneral@app.gov.co',
+  '1017130204': 'direcciontecnica@app.gov.co',
+  '1152195274': 'luisa.gutierrez@app.gov.co',
+  '71746035': 'javier.rodas@app.gov.co',
+  '43597565': 'paola.palacio@app.gov.co',
+  '1017154411': 'adriana.gaviria@app.gov.co',
+  '1037642516': 'maria.arrubla@app.gov.co',
+};
+
+function obtenerCorreoSupervisor(cedulaSupervisor) {
+  const cedula = String(cedulaSupervisor || '').trim();
+  return CORREOS_SUPERVISORES[cedula] || null;
+}
+
 async function getMicrosoftGraphToken() {
   const url = `https://login.microsoftonline.com/${TENANT_ID}/oauth2/v2.0/token`;
   const params = new URLSearchParams();
@@ -110,6 +129,104 @@ async function enviarCorreoBienvenidaPIN(token, emailDestino, contratista, contr
 app.get('/', (req, res) => {
   res.send('Servidor STC operando con filtrado dinámico de supervisores y doble factor por PIN de 4 dígitos desde el buzón institucional.');
 });
+
+// ====================================================================================
+// FUNCIÓN AUXILIAR: NOTIFICAR AL SUPERVISOR QUE UN ACTA ESTÁ LISTA PARA REVISIÓN
+// ====================================================================================
+async function enviarCorreoActaPendienteRevision(token, correoSupervisor, nombreSupervisor, contratista, contrato) {
+  if (!correoSupervisor) {
+    console.warn(`No hay correo registrado para el supervisor. No se notificó el acta del contrato ${contrato}.`);
+    return;
+  }
+  const url = 'https://graph.microsoft.com/v1.0/users/notificacionesmop@app.gov.co/sendMail';
+  const urlPlataforma = 'https://stc-frontend-pi.vercel.app/';
+
+  const mailPayload = {
+    message: {
+      subject: `📋 Acta Pendiente de Revisión - Contrato ${contrato}`,
+      body: {
+        contentType: "HTML",
+        content: `
+          <div style="font-family: 'Segoe UI', Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 8px; padding: 24px;">
+            <h2 style="color: #0056b3; border-bottom: 2px solid #0056b3; padding-bottom: 10px; margin-top: 0;">Hola, ${(nombreSupervisor || '').toUpperCase()}</h2>
+            <p style="font-size: 14px; line-height: 1.6;">El contratista <strong>${contratista}</strong> ha finalizado y enviado su Acta de Transferencia de Conocimiento correspondiente al contrato <strong>${contrato}</strong>. Está pendiente de tu revisión.</p>
+            <div style="text-align: center; margin: 28px 0;">
+              <a href="${urlPlataforma}" target="_blank" style="background-color: #0056b3; color: #ffffff; font-size: 14px; font-weight: bold; text-decoration: none; padding: 12px 28px; border-radius: 6px; display: inline-block;">
+                🔍 Revisar Acta en la Plataforma
+              </a>
+            </div>
+            <p style="font-size: 13px; color: #475569; line-height: 1.5;">Ingresa con tu cédula y PIN de supervisor, ubica el contrato en tu panel de monitoreo, y podrás aprobarla o rechazarla con un motivo.</p>
+            <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 24px 0;">
+            <p style="font-size: 11px; color: #94a3b8; text-align: center; margin: 0;">Transferencia de Conocimiento • Dirección Administrativa y Financiera • Agencia APP</p>
+          </div>
+        `
+      },
+      toRecipients: [ { emailAddress: { address: correoSupervisor } } ]
+    }
+  };
+
+  try {
+    await axios.post(url, mailPayload, { headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' } });
+    console.log(`Correo de acta pendiente enviado al supervisor: ${correoSupervisor}`);
+  } catch (err) {
+    console.error('Error enviando correo de acta pendiente:', err.response?.data || err.message);
+  }
+}
+
+// ====================================================================================
+// FUNCIÓN AUXILIAR: NOTIFICAR AL CONTRATISTA EL RESULTADO DE LA REVISIÓN (APROBADO/RECHAZADO)
+// ====================================================================================
+async function enviarCorreoResultadoRevision(token, correoContratista, contratista, contrato, aprobado, motivo) {
+  if (!correoContratista) {
+    console.warn(`No hay correo registrado para el contratista. No se notificó el resultado del contrato ${contrato}.`);
+    return;
+  }
+  const url = 'https://graph.microsoft.com/v1.0/users/notificacionesmop@app.gov.co/sendMail';
+  const urlPlataforma = 'https://stc-frontend-pi.vercel.app/';
+
+  const tituloEstado = aprobado ? '✅ Acta Aprobada' : '❌ Acta Rechazada - Requiere Corrección';
+  const colorEstado = aprobado ? '#166534' : '#991b1b';
+  const mensajeCuerpo = aprobado
+    ? `Te informamos que tu Acta de Transferencia de Conocimiento correspondiente al contrato <strong>${contrato}</strong> ha sido <strong>APROBADA</strong> por tu supervisor.`
+    : `Tu Acta de Transferencia de Conocimiento correspondiente al contrato <strong>${contrato}</strong> fue <strong>devuelta para corrección</strong> por tu supervisor.`;
+
+  const bloqueMotivo = (!aprobado && motivo) ? `
+    <div style="background-color: #fef2f2; border-left: 4px solid #dc2626; padding: 12px; margin: 18px 0; border-radius: 4px;">
+      <p style="margin: 4px 0; font-size: 13px; font-weight: bold; color: #991b1b;">Motivo indicado por el supervisor:</p>
+      <p style="margin: 4px 0; font-size: 14px; color: #333;">${motivo}</p>
+    </div>` : '';
+
+  const mailPayload = {
+    message: {
+      subject: `${tituloEstado} - Contrato ${contrato}`,
+      body: {
+        contentType: "HTML",
+        content: `
+          <div style="font-family: 'Segoe UI', Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 8px; padding: 24px;">
+            <h2 style="color: ${colorEstado}; border-bottom: 2px solid ${colorEstado}; padding-bottom: 10px; margin-top: 0;">¡Hola, ${contratista.toUpperCase()}!</h2>
+            <p style="font-size: 14px; line-height: 1.6;">${mensajeCuerpo}</p>
+            ${bloqueMotivo}
+            <div style="text-align: center; margin: 28px 0;">
+              <a href="${urlPlataforma}" target="_blank" style="background-color: ${colorEstado}; color: #ffffff; font-size: 14px; font-weight: bold; text-decoration: none; padding: 12px 28px; border-radius: 6px; display: inline-block;">
+                🚀 Ingresar a la Plataforma STC
+              </a>
+            </div>
+            <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 24px 0;">
+            <p style="font-size: 11px; color: #94a3b8; text-align: center; margin: 0;">Transferencia de Conocimiento • Dirección Administrativa y Financiera • Agencia APP</p>
+          </div>
+        `
+      },
+      toRecipients: [ { emailAddress: { address: correoContratista } } ]
+    }
+  };
+
+  try {
+    await axios.post(url, mailPayload, { headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' } });
+    console.log(`Correo de resultado de revisión enviado al contratista: ${correoContratista}`);
+  } catch (err) {
+    console.error('Error enviando correo de resultado de revisión:', err.response?.data || err.message);
+  }
+}
 
 // ==========================================
 // RUTA: CONSULTAR SECOP II (EXTRACTOR INTEGRAL)
@@ -246,7 +363,8 @@ app.get('/api/contratos', async (req, res) => {
       recomendaciones: item.fields.Recomendaciones || '',
       dependencia: item.fields.Dependencia || '',
       correo: item.fields.CorreoContratista || '',
-      fechaInicio: item.fields.Fechadeiniciodelcontrato || ''
+      fechaInicio: item.fields.Fechadeiniciodelcontrato || '',
+      motivoRechazo: item.fields.MotivoRechazo || ''
     }));
 
     res.json({ success: true, data: listaFormateada });
@@ -363,7 +481,8 @@ app.get('/api/login-contratista', async (req, res) => {
         dependencia: match.fields.Dependencia || '',
         lineamientos: match.fields.Lineamientos || '',
         recomendaciones: match.fields.Recomendaciones || '',
-        fechaInicio: match.fields.Fechadeiniciodelcontrato || ''
+        fechaInicio: match.fields.Fechadeiniciodelcontrato || '',
+        motivoRechazo: match.fields.MotivoRechazo || ''
       });
     } else {
       res.json({ success: true, exists: false });
@@ -386,6 +505,67 @@ app.post('/api/reabrir-acta', async (req, res) => {
     await axios.patch(url, payload, { headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' } });
     return res.json({ success: true });
   } catch (error) { return res.status(500).json({ success: false, detail: error.message }); }
+});
+
+// ==========================================
+// RUTA: APROBAR ACTA (ESTADO FINAL) + NOTIFICACIÓN AL CONTRATISTA
+// ==========================================
+app.post('/api/aprobar-acta', async (req, res) => {
+  const { idSharePoint } = req.body;
+  if (!idSharePoint) return res.status(400).json({ success: false, message: 'Falta el ID del acta.' });
+  try {
+    const token = await getMicrosoftGraphToken();
+    const itemUrl = `https://graph.microsoft.com/v1.0/sites/${SITE_ID}/lists/${LIST_ID_GENERAL}/items/${idSharePoint}?expand=fields`;
+
+    const itemActual = await axios.get(itemUrl, { headers: { 'Authorization': `Bearer ${token}` } });
+    const camposActuales = itemActual.data.fields;
+
+    const payload = { fields: { Estado: 'Aprobado', MotivoRechazo: '' } };
+    await axios.patch(itemUrl.split('?')[0], payload, { headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' } });
+
+    await enviarCorreoResultadoRevision(
+      token,
+      camposActuales.CorreoContratista,
+      camposActuales.Contratista,
+      camposActuales.Title,
+      true,
+      null
+    );
+
+    return res.json({ success: true });
+  } catch (error) { return res.status(500).json({ success: false, detail: error.response?.data?.error || error.message }); }
+});
+
+// ==========================================
+// RUTA: RECHAZAR ACTA (VUELVE A EDITABLE) + MOTIVO OBLIGATORIO + NOTIFICACIÓN AL CONTRATISTA
+// ==========================================
+app.post('/api/rechazar-acta', async (req, res) => {
+  const { idSharePoint, motivo } = req.body;
+  if (!idSharePoint) return res.status(400).json({ success: false, message: 'Falta el ID del acta.' });
+  if (!motivo || !String(motivo).trim()) return res.status(400).json({ success: false, message: 'El motivo del rechazo es obligatorio.' });
+
+  try {
+    const token = await getMicrosoftGraphToken();
+    const itemUrl = `https://graph.microsoft.com/v1.0/sites/${SITE_ID}/lists/${LIST_ID_GENERAL}/items/${idSharePoint}?expand=fields`;
+
+    const itemActual = await axios.get(itemUrl, { headers: { 'Authorization': `Bearer ${token}` } });
+    const camposActuales = itemActual.data.fields;
+
+    const motivoLimpio = String(motivo).trim();
+    const payload = { fields: { Estado: 'En diligenciamiento', MotivoRechazo: motivoLimpio } };
+    await axios.patch(itemUrl.split('?')[0], payload, { headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' } });
+
+    await enviarCorreoResultadoRevision(
+      token,
+      camposActuales.CorreoContratista,
+      camposActuales.Contratista,
+      camposActuales.Title,
+      false,
+      motivoLimpio
+    );
+
+    return res.json({ success: true });
+  } catch (error) { return res.status(500).json({ success: false, detail: error.response?.data?.error || error.message }); }
 });
 
 // ==========================================
@@ -416,9 +596,20 @@ app.post('/api/save-acta', async (req, res) => {
       }
     };
 
+    if (datosGenerales.isFinal) {
+      generalPayload.fields.MotivoRechazo = ''; // limpia cualquier rechazo anterior al reenviar
+    }
+
     await axios.patch(`${graphBaseUrl}/${LIST_ID_GENERAL}/items/${idSharePoint}`, generalPayload, {
       headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
     });
+
+    if (datosGenerales.isFinal) {
+      const itemGeneral = await axios.get(`${graphBaseUrl}/${LIST_ID_GENERAL}/items/${idSharePoint}?expand=fields`, { headers: { 'Authorization': `Bearer ${token}` } });
+      const cedulaSupervisorItem = itemGeneral.data.fields.CedulaSupervisor;
+      const correoSupervisor = obtenerCorreoSupervisor(cedulaSupervisorItem);
+      await enviarCorreoActaPendienteRevision(token, correoSupervisor, datosGenerales.supervisor, datosGenerales.nombreContratista, datosGenerales.numeroContrato);
+    }
 
     const rAcc = await axios.get(`${graphBaseUrl}/${LIST_ID_ACCIONES}/items?expand=fields`, { headers: { 'Authorization': `Bearer ${token}` } });
     await Promise.all(rAcc.data.value.filter(f => String(f.fields.CedulaRelacion).trim() === strCedula).map(f =>
