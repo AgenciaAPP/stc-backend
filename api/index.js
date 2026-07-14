@@ -277,7 +277,7 @@ app.get('/api/obtener-detalles-hijos', async (req, res) => {
           prioridad: item.fields.Prioridad,
           productos: item.fields.Productosentrega,
           accionConocimiento: item.fields.Acci_x00f3_nparalatransferenciad || 'No registrada',
-          ejecucion: item.fields.Describac_x00f3_mosellev_x00f3_a || '',
+          ejecucion: item.fields.Describac_x00f3_mosellev_x00f3_a: item.ejecucion || '',
           fecha: fechaLimpia,
           ruta: item.fields.Ruta_x0028_s_x0029_dondereposa_x || '',
           obs: item.fields.Observaciones || ''
@@ -468,7 +468,8 @@ app.post('/api/save-acta', async (req, res) => {
     ));
     if (directorio && directorio.length > 0) {
       for (const item of directorio) {
-        const f = { Title: item.nombre ? String(item.nombre).substring(0, 255) : '', CedulaRelacion: strCedula, Tel_x00e9_fono: item.tel, E_x002d_Mail: item.correo, Tipodecontacto: item.tipo, Entidad_x002f_Dependencia: item.entidad, Recommendations: item.reco };
+        // CORRECCIÓN EXACTA REALIZADA AQUÍ EN LA VARIABLE FINAL: Recommendations -> Recomendaciones
+        const f = { Title: item.nombre ? String(item.nombre).substring(0, 255) : '', CedulaRelacion: strCedula, Tel_x00e9_fono: item.tel, E_x002d_Mail: item.correo, Tipodecontacto: item.tipo, Entidad_x002f_Dependencia: item.entidad, Recomendaciones: item.reco };
         await axios.post(`${graphBaseUrl}/${LIST_ID_DIRECTORIO}/items`, { fields: f }, { headers: { 'Authorization': `Bearer ${token}` } });
       }
     }
