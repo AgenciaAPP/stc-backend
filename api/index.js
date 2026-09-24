@@ -23,7 +23,6 @@ const LIST_ID_DIRECTORIO = process.env.LIST_ID_DIRECTORIO;
 
 // ====================================================================================
 // MAPA FIJO DE CORREOS DE SUPERVISORES (CÉDULA -> CORREO)
-// Reemplaza este objeto con la lista real. Formato: 'cedula': 'correo@agenciaapp.gov.co'
 // ====================================================================================
 const CORREOS_SUPERVISORES = {
   '70879917': 'direcciongeneral@app.gov.co',
@@ -74,7 +73,6 @@ function calcularPinSupervisor(cedula) {
 async function enviarCorreoBienvenidaPIN(token, emailDestino, contratista, contrato, pinGenerado) {
   const url = 'https://graph.microsoft.com/v1.0/users/lina.martinez@app.gov.co/sendMail';
 
-  // URL de la plataforma para el redireccionamiento directo del contratista
   const urlPlataforma = 'https://stc-frontend-pi.vercel.app/';
 
   const mailPayload = {
@@ -99,7 +97,6 @@ async function enviarCorreoBienvenidaPIN(token, emailDestino, contratista, contr
               </div>
             </div>
 
-            <!-- BOTÓN INTERACTIVO ADICIONADO: Redirección directa a la plataforma -->
             <div style="text-align: center; margin: 28px 0;">
               <a href="${urlPlataforma}" target="_blank" style="background-color: #0056b3; color: #ffffff; font-size: 14px; font-weight: bold; text-decoration: none; padding: 12px 28px; border-radius: 6px; display: inline-block; box-shadow: 0 4px 6px rgba(0,86,179,0.15);">
                 🚀 Ingresar a la Plataforma STC
@@ -271,7 +268,9 @@ app.get('/api/buscar-secop', async (req, res) => {
 });
 
 // ==========================================
-// RUTA: HABILITAR CONTRATO (GENERACIÓN DINÁMICA DE PIN Y DISPARO DE CORREO AUTOMÁTICO)
+// RUTA: HABILITAR CONTRATO
+// Validación anti-duplicado: bloquea si ya existe el mismo número de contrato
+// para la misma cédula. Una cédula puede tener contratos distintos sin problema.
 // ==========================================
 app.post('/api/habilitar-contrato', async (req, res) => {
   const { contrato, contratista, cedula, objeto, supervisor, cedulaSupervisor, fechaInicio, correoNotificacion } = req.body;
@@ -282,18 +281,40 @@ app.post('/api/habilitar-contrato', async (req, res) => {
     const token = await getMicrosoftGraphToken();
     const graphBaseUrl = `https://graph.microsoft.com/v1.0/sites/${SITE_ID}/lists`;
 
+    // ─── VALIDACIÓN ANTI-DUPLICADO (cédula + contrato) ───────────────────────
+    // Se permite que una misma cédula tenga varios contratos a lo largo del tiempo.
+    // Solo se bloquea si ya existe exactamente la misma combinación cédula+contrato.
+    const checkUrl = `${graphBaseUrl}/${LIST_ID_GENERAL}/items?expand=fields`;
+    const checkResponse = await axios.get(checkUrl, { headers: { 'Authorization': `Bearer ${token}` } });
+    const cedulaLimpia = String(cedula).trim();
+    const contratoLimpio = String(contrato).trim();
+
+    const registroExistente = checkResponse.data.value.find(item => {
+      const nitFila = item.fields.NIT_x002f_CC ? String(item.fields.NIT_x002f_CC).trim() : '';
+      const contratoFila = item.fields.Title ? String(item.fields.Title).trim() : '';
+      return nitFila === cedulaLimpia && contratoFila === contratoLimpio;
+    });
+
+    if (registroExistente) {
+      return res.status(409).json({
+        success: false,
+        message: `⚠️ La cédula ${cedulaLimpia} ya tiene un registro activo para el contrato ${contratoLimpio}. No se creó un duplicado.`
+      });
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
     const pinAleatorio = String(Math.floor(1000 + Math.random() * 9000));
     const destinoMail = correoNotificacion ? String(correoNotificacion).trim() : 'correo.pendiente@agenciaapp.co';
 
     const habilitarPayload = {
       fields: {
-        Title: contrato ? String(contrato).substring(0, 255) : '',
+        Title: contratoLimpio.substring(0, 255),
         Supervisor: supervisor,
         CedulaSupervisor: String(cedulaSupervisor).trim(),
         Objetocontractual: objeto,
         Fechadeiniciodelcontrato: fechaInicio || '',
         Contratista: contratista,
-        NIT_x002f_CC: String(cedula).trim(),
+        NIT_x002f_CC: cedulaLimpia,
         Estado: 'Sin diligenciar',
         PIN_Contratista: pinAleatorio,
         CorreoContratista: destinoMail
@@ -687,11 +708,9 @@ app.get('/api/migrar-pines-pendientes', async (req, res) => {
     const token = await getMicrosoftGraphToken();
     const graphBaseUrl = `https://graph.microsoft.com/v1.0/sites/${SITE_ID}/lists/${LIST_ID_GENERAL}/items?expand=fields`;
 
-    // 1. Traer todos los contratos de SharePoint
     const response = await axios.get(graphBaseUrl, { headers: { 'Authorization': `Bearer ${token}` } });
     const items = response.data.value;
 
-    // 2. Filtrar solo los registros que NO tengan un PIN asignado
     const pendientes = items.filter(item => !item.fields.PIN_Contratista);
 
     if (pendientes.length === 0) {
@@ -700,23 +719,18 @@ app.get('/api/migrar-pines-pendientes', async (req, res) => {
 
     let logsMigracion = [];
 
-    // 3. Iterar y actualizar a cada persona de forma controlada
     for (const item of pendientes) {
       const idItem = item.id;
       const contratista = item.fields.Contratista || "Contratista Registrado";
       const contratoRef = item.fields.Title || "PS-PENDIENTE";
       const correoDestino = item.fields.CorreoContratista ? String(item.fields.CorreoContratista).trim() : 'correo.pendiente@agenciaapp.co';
 
-      // Generar el PIN dinámico de 4 dígitos
       const nuevoPin = String(Math.floor(1000 + Math.random() * 9000));
 
-      // Actualizar la fila en SharePoint con su nuevo PIN
       const patchUrl = `https://graph.microsoft.com/v1.0/sites/${SITE_ID}/lists/${LIST_ID_GENERAL}/items/${idItem}`;
       const payload = { fields: { PIN_Contratista: nuevoPin } };
 
       await axios.patch(patchUrl, payload, { headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' } });
-
-      // Disparar la notificación oficial con la redacción formal y el nuevo link
       await enviarCorreoBienvenidaPIN(token, correoDestino, contratista, contratoRef, nuevoPin);
 
       logsMigracion.push({ contratista, contratoRef, correoDestino, pinAsignado: nuevoPin });
