@@ -795,4 +795,56 @@ app.get('/api/diagnostico-supervisores', async (req, res) => {
   }
 });
 
+// ====================================================================================
+// RUTA: CORRECCIÓN MASIVA DE CÉDULAS SECOP EN REGISTROS EXISTENTES
+// Ejecutar UNA SOLA VEZ después de deploy. Parchea SharePoint con las cédulas correctas.
+// ====================================================================================
+app.post('/api/corregir-cedulas-secop', async (req, res) => {
+  try {
+    const token = await getMicrosoftGraphToken();
+    const graphBaseUrl = `https://graph.microsoft.com/v1.0/sites/${SITE_ID}/lists`;
+    const url = `${graphBaseUrl}/${LIST_ID_GENERAL}/items?expand=fields`;
+    const response = await axios.get(url, { headers: { 'Authorization': `Bearer ${token}` } });
+    const items = response.data.value;
+
+    const corregidos = [];
+    const sinCorreccion = [];
+
+    for (const item of items) {
+      const cedulaActual = item.fields.CedulaSupervisor ? String(item.fields.CedulaSupervisor).trim() : '';
+      const cedulaCorrecta = CORRECCION_CEDULAS_SECOP[cedulaActual];
+
+      if (cedulaCorrecta) {
+        const patchUrl = `${graphBaseUrl}/${LIST_ID_GENERAL}/items/${item.id}/fields`;
+        await axios.patch(patchUrl, { CedulaSupervisor: cedulaCorrecta }, {
+          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
+        });
+        corregidos.push({
+          contratista: item.fields.Contratista || '',
+          contrato: item.fields.Title || '',
+          cedulaAntes: cedulaActual,
+          cedulaDespues: cedulaCorrecta,
+          supervisor: item.fields.Supervisor || ''
+        });
+      } else if (!CORREOS_SUPERVISORES[cedulaActual]) {
+        sinCorreccion.push({
+          contratista: item.fields.Contratista || '',
+          contrato: item.fields.Title || '',
+          cedulaSupervisorGuardada: cedulaActual,
+          supervisor: item.fields.Supervisor || ''
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      corregidos: corregidos.length,
+      sinCorreccionDisponible: sinCorreccion.length,
+      detalle: { corregidos, sinCorreccion }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, detail: error.message });
+  }
+});
+
 export default app;
