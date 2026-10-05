@@ -34,8 +34,20 @@ const CORREOS_SUPERVISORES = {
   '1037642516': 'maria.arrubla@app.gov.co',
 };
 
+// ====================================================================================
+// CORRECCIÓN DE CÉDULAS MAL REPORTADAS POR SECOP II
+// ====================================================================================
+const CORRECCION_CEDULAS_SECOP = {
+  '7089917':    '70879917',   // Daniel Felipe Escobar Valencia (SECOP omite el 8)
+  '1152192274': '1152195274', // Luisa Fernanda (SECOP trae dígito incorrecto en posición 7)
+};
+
 function obtenerCorreoSupervisor(cedulaSupervisor) {
-  const cedula = String(cedulaSupervisor || '').trim();
+  let cedula = String(cedulaSupervisor || '').trim();
+  if (CORRECCION_CEDULAS_SECOP[cedula]) {
+    console.log(`Corrección SECOP aplicada: ${cedula} → ${CORRECCION_CEDULAS_SECOP[cedula]}`);
+    cedula = CORRECCION_CEDULAS_SECOP[cedula];
+  }
   return CORREOS_SUPERVISORES[cedula] || null;
 }
 
@@ -281,6 +293,13 @@ app.post('/api/habilitar-contrato', async (req, res) => {
     const token = await getMicrosoftGraphToken();
     const graphBaseUrl = `https://graph.microsoft.com/v1.0/sites/${SITE_ID}/lists`;
 
+    // ─── CORRECCIÓN CÉDULA SUPERVISOR (SECOP II a veces reporta mal) ──────────
+    let cedulaSupervisorLimpia = String(cedulaSupervisor || '').trim();
+    if (CORRECCION_CEDULAS_SECOP[cedulaSupervisorLimpia]) {
+      console.log(`Corrección SECOP en habilitación: ${cedulaSupervisorLimpia} → ${CORRECCION_CEDULAS_SECOP[cedulaSupervisorLimpia]}`);
+      cedulaSupervisorLimpia = CORRECCION_CEDULAS_SECOP[cedulaSupervisorLimpia];
+    }
+
     // ─── VALIDACIÓN ANTI-DUPLICADO (cédula + contrato) ───────────────────────
     // Se permite que una misma cédula tenga varios contratos a lo largo del tiempo.
     // Solo se bloquea si ya existe exactamente la misma combinación cédula+contrato.
@@ -310,7 +329,7 @@ app.post('/api/habilitar-contrato', async (req, res) => {
       fields: {
         Title: contratoLimpio.substring(0, 255),
         Supervisor: supervisor,
-        CedulaSupervisor: String(cedulaSupervisor).trim(),
+        CedulaSupervisor: cedulaSupervisorLimpia,
         Objetocontractual: objeto,
         Fechadeiniciodelcontrato: fechaInicio || '',
         Contratista: contratista,
@@ -740,6 +759,39 @@ app.get('/api/migrar-pines-pendientes', async (req, res) => {
 
   } catch (error) {
     return res.status(500).json({ success: false, message: "Error ejecutando el proceso de migración", detail: error.message });
+  }
+});
+
+// ====================================================================================
+// RUTA: DIAGNÓSTICO DE SUPERVISORES (detecta cédulas sin correo mapeado)
+// ====================================================================================
+app.get('/api/diagnostico-supervisores', async (req, res) => {
+  try {
+    const token = await getMicrosoftGraphToken();
+    const url = `https://graph.microsoft.com/v1.0/sites/${SITE_ID}/lists/${LIST_ID_GENERAL}/items?expand=fields`;
+    const response = await axios.get(url, { headers: { 'Authorization': `Bearer ${token}` } });
+    const items = response.data.value;
+
+    const resultado = items.map(item => {
+      const cedulaSuper = item.fields.CedulaSupervisor ? String(item.fields.CedulaSupervisor).trim() : '';
+      const tieneCorreo = !!CORREOS_SUPERVISORES[cedulaSuper];
+      const correccionDisponible = CORRECCION_CEDULAS_SECOP[cedulaSuper] || null;
+      return {
+        contratista: item.fields.Contratista || '',
+        contrato: item.fields.Title || '',
+        cedulaSupervisorGuardada: cedulaSuper,
+        supervisor: item.fields.Supervisor || '',
+        tieneCorreo: tieneCorreo ? '✅ Sí' : '❌ No',
+        correccionDisponible: correccionDisponible
+          ? `→ ${correccionDisponible}`
+          : (tieneCorreo ? 'N/A' : '⚠️ No hay corrección registrada')
+      };
+    });
+
+    const sinCorreo = resultado.filter(r => r.tieneCorreo === '❌ No');
+    res.json({ success: true, total: resultado.length, sinCorreo: sinCorreo.length, registros: resultado });
+  } catch (error) {
+    res.status(500).json({ success: false, detail: error.message });
   }
 });
 
